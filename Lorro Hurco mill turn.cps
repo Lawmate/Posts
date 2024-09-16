@@ -337,6 +337,7 @@ var zOutput = createVariable({onchange:function() {retracted[Z] = false;}, prefi
 var feedOutput = createVariable({prefix:"F"}, feedFormat);
 var pitchOutput = createVariable({prefix:"F", force:true}, pitchFormat);
 var sOutput = createVariable({prefix:"S", force:true}, rpmFormat);
+var pOutput = createVariable({prefix:"X"}, xFormat);
 var qOutput = createVariable({prefix:"Y"}, yFormat);
 
 // circular output
@@ -710,7 +711,7 @@ function onComment(message) {
 
 /** Force output of X, Y, and Z. */
 function forceXYZ() {
-  xOutput.reset();
+  xOutput = null;
   yOutput.reset();
   zOutput.reset();
 }
@@ -1444,9 +1445,9 @@ function onRapid(_x, _y, _z) {
     (hasParameter("operation:infeedMode") && (getParameter("operation:infeedMode") == "alternate")))) {
     return;
   }
-  var x = isMilling? _x : getMoveX(_x);
-  var y = isMilling? _y : getMoveY(_x);
-  var z = isMilling? _z : getMoveZ(_z);
+  var x = isMilling? pOutput.format(_x) : getMoveX(_x);
+  var y = isMilling? qOutput.format(_y) : getMoveY(_x);
+  var z = isMilling? zOutput.format(_z) : getMoveZ(_z);
   if (x || y || z) {
     if (pendingRadiusCompensation >= 0) {
       pendingRadiusCompensation = -1;
@@ -1571,9 +1572,9 @@ function onLinear(_x, _y, _z, feed) {
       
     }
   }
-  var x = getMoveX(_x);
-  var y = getMoveY(_x);
-  var z = getMoveZ(_z);
+  var x = isMilling ? pOutput.format(_x) : getMoveX(_x);
+  var y = isMilling ? qOutput.format(_y) : getMoveY(_x);
+  var z = isMilling ? zOutput.format(_z) : getMoveZ(_z);
   var f = getFeed( feed );
   if (x || y || z) {
     if (pendingRadiusCompensation >= 0) {
