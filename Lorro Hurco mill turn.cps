@@ -994,7 +994,11 @@ function setDirectionX() {
   xOutput = createVariable({onchange:function() {retracted[X] = false;}, prefix:"X"}, xFormat);
   iOutput = createReferenceVariable({prefix:"I"}, iFormat);
 }
+/*
+A rotation: camX stays the same, camY = cosMachineY; sinMachineZ, camZ = sinMachineY; cosMachineZ
+ArotX = camX, ArotY = cosCamY+sinCamZ, ArotZ = sinCamY+cosCamZ
 
+*/
 function getMoveX( camValX ){
   // Converts the normal lathe x axis moves into mill bed x axis moves.
   // It does this by rotating the moves around the turret centre position.
@@ -1005,6 +1009,7 @@ function getMoveX( camValX ){
   //Applies tool height offset (equivalent to y axis in lathe) off rotated axis
   var xToolHeightOffset = tool.offsety * Math.cos ( Math.PI * 2 * ( ( tool.offseta < 270 ? tool.offseta + 90 : tool.offseta + 90 -360 ) / 360 ) );
   var x = getProperty("blockCentreX") + xturretOffset + xToolHeightOffset;
+  
   // writeComment(getProperty("blockCentreX")*2);
   return xOutput.format(x);
 
@@ -1053,6 +1058,27 @@ function getCSSFeed( speedVal ){
   return feedVal;
 }
 
+function getLiveTool(CamX, CamY, CamZ, toolA, toolC){
+
+  var x1 = CamX;
+  var y1 = (Math.cos((toolA*Math.PI)/180)*CamY)-(Math.sin((toolA*Math.PI)/180)*CamZ);
+  var z1 = (Math.sin((toolA*Math.PI)/180)*CamZ)+(Math.cos((toolA*Math.PI)/180)*CamY);
+
+  var x2 = (Math.cos((toolC*Math.PI)/180)*x1)-(Math.sin((toolC*Math.PI)/180)*x1);
+  var y2 = (Math.sin((toolC*Math.PI)/180)*y1)+(Math.cos((toolC*Math.PI)/180)*y1);
+  var z2 = z1;
+
+  var outX = x2 + tool.offsetx;
+  var outY = y2 + tool.offsety;
+  var outZ = z2 + tool.offsetz;
+
+  return{
+    liveRotX:outX,
+    liveRotY:outY,
+    liveRotZ:outZ
+  }
+}
+
 function movementComment(){
   if(movement == MOVEMENT_CUTTING){
     writeComment(movement + " MOVEMENT_CUTTING");
@@ -1091,6 +1117,7 @@ function movementComment(){
 }
 
 var isMilling = false;
+var liveTool = false;
 
 function onSection() {
   if (currentSection.getType() != TYPE_TURNING) {
@@ -1101,7 +1128,7 @@ function onSection() {
       } else {
         // error(localize("Non-turning toolpath is not supported."));
       }
-      return;
+      // return;
     }
   }else{
     isMilling = false;
@@ -1185,23 +1212,34 @@ function onSection() {
     }
   }
   var isRoughing = false;
-
   if (tool.comment) {
-      // var xoff = /(?:x)([0-9]+)/.test(tool.comment);
-      var vals = (tool.comment).split(',');
-      var thenum = new Array;
-      for(i in vals){
-          thenum[i] = vals[i].replace(/^\s[A-z]|[A-z]+/, '');
-      }
+    // var xoff = /(?:x)([0-9]+)/.test(tool.comment);
+    var data;
+    if((tool.comment).startsWith('livetool')){
+      var temp = new Array;
+      temp = (tool.comment).split('livetool ');
+      data = temp[1];
+      liveTool = true;
+    }else{
+      data = tool.comment;
+    }
+
+    var vals = data.split(',');
+    var thenum = new Array;
+    for(i in vals){
+        thenum[i] = vals[i].replace(/^\s[A-z]|[A-z]+/, '');
+    }
     tool.offsetx=Number(thenum[0]);
     tool.offsety=Number(thenum[1]);
     tool.offsetz=Number(thenum[2]);
     tool.offseta=Number(thenum[3]);
+    if(thenum.length>4)tool.offsetc=Number(thenum[4]);
     writeComment(tool.comment);
     writeComment("x is: " + tool.offsetx);
     writeComment("y is: " + tool.offsety);
     writeComment("z is: " + tool.offsetz);
-    writeComment("rotation angle is: " + tool.offseta);
+    writeComment("A rotation angle is: " + tool.offseta);
+    if(thenum.length>4)writeComment("C rotation angle is: " + tool.offsetc);
     // if(currentSection.strategy==="TURNINGPROFILEROUGHING"){
       // if(currentSection.checkGroup(STRATEGY_ROUGHING, STRATEGY_TURNING)){
     if (getParameter("operation-strategy")==='turningProfileRoughing') {
@@ -1445,9 +1483,25 @@ function onRapid(_x, _y, _z) {
     (hasParameter("operation:infeedMode") && (getParameter("operation:infeedMode") == "alternate")))) {
     return;
   }
-  var x = isMilling? pOutput.format(_x) : getMoveX(_x);
-  var y = isMilling? qOutput.format(_y) : getMoveY(_x);
-  var z = isMilling? zOutput.format(_z) : getMoveZ(_z);
+  if(isMilling){
+    if(liveTool){
+      var transform = getLiveTool(_x, _y, _z, tool.offseta, tool.offsetc);
+      var x = pOutput.format(transform.liveRotX);
+      var y = qOutput.format(transform.liveRotY);
+      var z = zOutput.format(transform.liveRotZ);
+    }else{
+      var x = pOutput.format(_x);
+      var y = qOutput.format(_y);
+      var z = zOutput.format(_z);
+    }
+  }else{
+    var x = getMoveX(_x);
+    var y = getMoveY(_x);
+    var z = getMoveZ(_z);
+  }
+  // var x = isMilling? pOutput.format(_x) : getMoveX(_x);
+  // var y = isMilling? qOutput.format(_y) : getMoveY(_x);
+  // var z = isMilling? zOutput.format(_z) : getMoveZ(_z);
   if (x || y || z) {
     if (pendingRadiusCompensation >= 0) {
       pendingRadiusCompensation = -1;
@@ -1572,9 +1626,22 @@ function onLinear(_x, _y, _z, feed) {
       
     }
   }
-  var x = isMilling ? pOutput.format(_x) : getMoveX(_x);
-  var y = isMilling ? qOutput.format(_y) : getMoveY(_x);
-  var z = isMilling ? zOutput.format(_z) : getMoveZ(_z);
+  if(isMilling){
+    if(liveTool){
+      var transform = getLiveTool(_x, _y, _z, tool.offseta, tool.offsetc);
+      var x = pOutput.format(transform.liveRotX);
+      var y = qOutput.format(transform.liveRotY);
+      var z = zOutput.format(transform.liveRotZ);
+    }else{
+      var x = pOutput.format(_x);
+      var y = qOutput.format(_y);
+      var z = zOutput.format(_z);
+    }
+  }else{
+    var x = getMoveX(_x);
+    var y = getMoveY(_x);
+    var z = getMoveZ(_z);
+  }
   var f = getFeed( feed );
   if (x || y || z) {
     if (pendingRadiusCompensation >= 0) {
