@@ -407,7 +407,7 @@ function onPassThrough(text) {
     for (text in commands) {
       if(commands[text]==='front'){
         writeBlock(gFormat.format(53), gMotionModal.format(0), zOutput.format(0));
-        writeBlock(gFormat.format(53), gMotionModal.format(0), xOutput.format(300), yOutput.format(405));
+        writeBlock(gFormat.format(53), gMotionModal.format(0), pOutput.format(300), qOutput.format(405));
         // writeBlock(yOutput.format(333));
       }else{
         writeBlock(commands[text]);
@@ -1224,6 +1224,36 @@ function getLiveToolCirc(plane, dir, CamCenX, CamCenY, CamCenZ, CamEndX, CamEndY
   };
 }
 
+//custom chipbreaking drill cycle
+function customChipBreaker(x,y,z,clearance,retract,stock,depth,feedrate,incrementalDepth,incrementalDepthReduction,minimumIncrementalDepth,accumulatedDepth,chipBreakDistance,dwell){
+  
+  writeBlock(gMotionModal.format(0), pOutput.format(x), qOutput.format(y), zOutput.format(z+clearance));
+  writeBlock(gMotionModal.format(1), pOutput.format(x), qOutput.format(y), zOutput.format(z+retract), feedOutput.format(feedrate));
+  var drilling = true;
+  var g1 = z - incrementalDepth;
+  var g0 = g1 + chipBreakDistance;
+  var stepCounter = 2;
+  var currentIncrementalDepth = incrementalDepth;
+  var holeDepth = z - depth;
+  while(drilling){
+    writeBlock(gMotionModal.format(1), pOutput.format(x), qOutput.format(y), zOutput.format(g1), feedOutput.format(feedrate));
+    writeBlock(gMotionModal.format(0), pOutput.format(x), qOutput.format(y), zOutput.format(g0));
+    // writeComment("g1: " + g1);
+    // writeComment("g0: " + g0);
+    currentIncrementalDepth = currentIncrementalDepth - incrementalDepthReduction;
+    if( currentIncrementalDepth <= minimumIncrementalDepth ) currentIncrementalDepth = minimumIncrementalDepth; 
+    g1 = g1 - currentIncrementalDepth;
+    if(g1 < holeDepth){
+      g1 = holeDepth;
+      drilling = false;
+    }
+    g0 = g1 + chipBreakDistance;
+    stepCounter++;
+  }
+  writeBlock(gMotionModal.format(0), pOutput.format(x), qOutput.format(y), zOutput.format(z+clearance));
+  // writeComment("g0: " + (z+clearance));
+}
+
 function movementComment(){
   if(movement == MOVEMENT_CUTTING){
     writeComment(movement + " MOVEMENT_CUTTING");
@@ -1432,12 +1462,13 @@ function onSection() {
         ODboring = false;
       }
     }
-      if(tool.type===1){
-        writeComment("turned part drill");
-        latheDrill = true;
-      }else{
-        latheDrill = false;
-      }
+
+    if(tool.type===1){
+      writeComment("turned part drill");
+      latheDrill = true;
+    }else{
+      latheDrill = false;
+    }
   }else{
     liveTool = false;
     latheTool = false;
@@ -2193,6 +2224,8 @@ function onCyclePoint(x, y, z) {
     return;
   }
 
+
+  //special situation when part is held in collet and spindle is spun to break joint on part.
   if(isTwistOff){
     writeBlock(mFormat.format(5));
     writeBlock(gMotionModal.format(1),pOutput.format(x),qOutput.format(y),zOutput.format(z), getFeed(5000));
@@ -2358,7 +2391,26 @@ function onCyclePoint(x, y, z) {
       break;
     case "chip-breaking":
       if ((cycle.accumulatedDepth < cycle.depth) || (P > 0 && !getProperty("isnc"))) {
-        expandCyclePoint(x, y, z);
+        //expandChipBreaking(x, y, z, cycle.clearance, cycle.retract, cycle.stock, cycle.depth, cycle.feedrate, cycle.incrementalDepth, cycle.incrementalDepthReduction, cycle.minimumIncrementalDepth, cycle.accumulatedDepth, cycle.chipBreakDistance, cycle.dwell, flags);
+        if(latheDrill){
+          writeComment("clearence "+cycle.clearance);
+          writeComment("retract "+cycle.retract);
+          writeComment("stock "+cycle.stock);
+          writeComment("depth "+cycle.depth);
+          writeComment("feedrate "+cycle.feedrate);
+          writeComment("incrementalDepth "+cycle.incrementalDepth);
+          writeComment("incrementalDepthReduction "+cycle.incrementalDepthReduction);
+          writeComment("minimumIncrementalDepth "+cycle.minimumIncrementalDepth);
+          writeComment("accumulatedDepth "+cycle.accumulatedDepth);
+          writeComment("chipBreakDistance "+cycle.chipBreakDistance);
+          // writeComment("dwell "+cycle.dwell);
+          // expandCyclePoint(millx, milly,100);
+          // var flags=0;
+          //call custom chipbreaking drilling cycle
+          customChipBreaker(millx, milly, (millz-z), cycle.clearance, cycle.retract, cycle.stock, cycle.depth, cycle.feedrate, cycle.incrementalDepth, cycle.incrementalDepthReduction, cycle.minimumIncrementalDepth, cycle.accumulatedDepth, cycle.chipBreakDistance, cycle.dwell);
+        }else{
+          // expandCyclePoint(x, y, z);
+        }
       } else {
         writeBlock(
           gCycleModal.format(getProperty("isnc") ? 83.1 : 73),
