@@ -1227,14 +1227,16 @@ function getLiveToolCirc(plane, dir, CamCenX, CamCenY, CamCenZ, CamEndX, CamEndY
 //custom chipbreaking drill cycle
 function customChipBreaker(x,y,z,clearance,retract,stock,depth,feedrate,incrementalDepth,incrementalDepthReduction,minimumIncrementalDepth,accumulatedDepth,chipBreakDistance,dwell){
   
+  var startDrillPos = z + retract;
   writeBlock(gMotionModal.format(0), pOutput.format(x), qOutput.format(y), zOutput.format(z+clearance));
-  writeBlock(gMotionModal.format(1), pOutput.format(x), qOutput.format(y), zOutput.format(z+retract), feedOutput.format(feedrate));
+  writeBlock(gMotionModal.format(0), pOutput.format(x), qOutput.format(y), zOutput.format(startDrillPos));
   var drilling = true;
   var g1 = z - incrementalDepth;
   var g0 = g1 + chipBreakDistance;
   var stepCounter = 2;
   var currentIncrementalDepth = incrementalDepth;
   var holeDepth = z - depth;
+  var accumulatedRetract = accumulatedDepth;
   while(drilling){
     writeBlock(gMotionModal.format(1), pOutput.format(x), qOutput.format(y), zOutput.format(g1), feedOutput.format(feedrate));
     writeBlock(gMotionModal.format(0), pOutput.format(x), qOutput.format(y), zOutput.format(g0));
@@ -1247,8 +1249,15 @@ function customChipBreaker(x,y,z,clearance,retract,stock,depth,feedrate,incremen
       g1 = holeDepth;
       drilling = false;
     }
-    g0 = g1 + chipBreakDistance;
-    stepCounter++;
+    if( g1 < ( startDrillPos - accumulatedRetract ) ){
+      writeBlock(gMotionModal.format(0), pOutput.format(x), qOutput.format(y), zOutput.format(startDrillPos));
+      writeBlock(gMotionModal.format(0), pOutput.format(x), qOutput.format(y), zOutput.format(g0));
+      accumulatedRetract = accumulatedRetract + accumulatedDepth;
+      // writeComment(g0);
+    }else{
+      g0 = g1 + chipBreakDistance;
+    }
+    // stepCounter++;
   }
   writeBlock(gMotionModal.format(0), pOutput.format(x), qOutput.format(y), zOutput.format(z+clearance));
   // writeComment("g0: " + (z+clearance));
