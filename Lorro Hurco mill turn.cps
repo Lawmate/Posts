@@ -406,6 +406,7 @@ function onPassThrough(text) {
     var commands = String(text).split(",");
     for (text in commands) {
       if(commands[text]==='front'){
+        writeBlock(mFormat.format(9));
         writeBlock(gFormat.format(53), gMotionModal.format(0), zOutput.format(0));
         writeBlock(gFormat.format(53), gMotionModal.format(0), pOutput.format(300), qOutput.format(405));
         // writeBlock(yOutput.format(333));
@@ -1228,14 +1229,14 @@ function getLiveToolCirc(plane, dir, CamCenX, CamCenY, CamCenZ, CamEndX, CamEndY
 function customChipBreaker(x,y,z,clearance,retract,stock,depth,feedrate,incrementalDepth,incrementalDepthReduction,minimumIncrementalDepth,accumulatedDepth,chipBreakDistance,dwell){
   
   var startDrillPos = z + retract;
-  writeBlock(gMotionModal.format(0), pOutput.format(x), qOutput.format(y), zOutput.format(z+clearance));
+  writeBlock(gMotionModal.format(0), pOutput.format(x), qOutput.format(y), zOutput.format(z + stock + clearance));
   writeBlock(gMotionModal.format(0), pOutput.format(x), qOutput.format(y), zOutput.format(startDrillPos));
   var drilling = true;
-  var g1 = z - incrementalDepth;
+  var g1 = z + stock - incrementalDepth;
   var g0 = g1 + chipBreakDistance;
   var stepCounter = 2;
   var currentIncrementalDepth = incrementalDepth;
-  var holeDepth = z - depth;
+  var holeDepth = z + stock - depth;
   var accumulatedRetract = accumulatedDepth;
   while(drilling){
     writeBlock(gMotionModal.format(1), pOutput.format(x), qOutput.format(y), zOutput.format(g1), feedOutput.format(feedrate));
@@ -2402,6 +2403,7 @@ function onCyclePoint(x, y, z) {
       if ((cycle.accumulatedDepth < cycle.depth) || (P > 0 && !getProperty("isnc"))) {
         //expandChipBreaking(x, y, z, cycle.clearance, cycle.retract, cycle.stock, cycle.depth, cycle.feedrate, cycle.incrementalDepth, cycle.incrementalDepthReduction, cycle.minimumIncrementalDepth, cycle.accumulatedDepth, cycle.chipBreakDistance, cycle.dwell, flags);
         if(latheDrill){
+          writeComment("millx: " + millx + ", milly: " + milly + ", millz-z: " + (millz-z));
           writeComment("clearence "+cycle.clearance);
           writeComment("retract "+cycle.retract);
           writeComment("stock "+cycle.stock);
