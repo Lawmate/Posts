@@ -727,6 +727,8 @@ function onComment(message) {
 function forceXYZ() {
   xOutput = null;
   yOutput.reset();
+  pOutput.reset();
+  qOutput.reset();
   zOutput.reset();
 }
 
@@ -1496,8 +1498,19 @@ function onSection() {
     }
     // writeComment("here");
     if(!liveTool && !latheTool){
-      writeBlock("T" + toolFormat.format(tool.number), mFormat.format(6));
 
+      writeBlock("T" + toolFormat.format(tool.number), mFormat.format(6));
+      var nextTool = getNextTool(tool.number);
+      if (nextTool) {
+        writeBlock("T" + toolFormat.format(nextTool.number));
+      } else {
+        // preload first tool
+        var section = getSection(0);
+        var firstToolNumber = section.getTool().number;
+        if (tool.number != firstToolNumber) {
+          writeBlock("T" + toolFormat.format(firstToolNumber));
+        }
+      }
     }
 
     if (tool.number > 9999) {
@@ -2190,6 +2203,7 @@ function getStartEndSequenceNumber(cyclePath, start) {
 
 function getCommonCycle(x, y, z, r) {
   forceXYZ(); // force xyz for turning
+  // writeComment("x: " + x + ", y: " + y);
   return [pOutput.format(x), qOutput.format(y),
     zOutput.format(z),
     "R" + spatialFormat.format(r)];
@@ -2494,6 +2508,7 @@ function onCyclePoint(x, y, z) {
       F = tool.getThreadPitch() * rpmFormat.getResultingValue(spindleSpeed);
       // writeComment(rpmFormat.getResultingValue(spindleSpeed));
       if (getProperty("isnc")) {
+        writeBlock(mFormat.format(29)); // rigid
         writeBlock(
           gCycleModal.format(98), gCycleModal.format((getProperty("useRigidTapping") ? 84.2 : 84) + (tool.type == TOOL_TAP_LEFT_HAND ? 0.1 : 0)),
           getCommonCycle(x, y, z, cycle.retract),
