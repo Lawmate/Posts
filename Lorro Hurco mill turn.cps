@@ -1227,7 +1227,8 @@ function getLiveToolCirc(plane, dir, CamCenX, CamCenY, CamCenZ, CamEndX, CamEndY
 
 //custom chipbreaking drill cycle
 function customChipBreaker(x,y,z,clearance,retract,stock,depth,feedrate,incrementalDepth,incrementalDepthReduction,minimumIncrementalDepth,accumulatedDepth,chipBreakDistance,dwell){
-  
+  //depth = model top to drill bottom
+  //stock = model top to model bottom (thickness)
   var startDrillPos = z + retract;
   writeBlock(gMotionModal.format(0), pOutput.format(x), qOutput.format(y), zOutput.format(z + stock + clearance));
   writeBlock(gMotionModal.format(0), pOutput.format(x), qOutput.format(y), zOutput.format(startDrillPos));
@@ -1236,7 +1237,8 @@ function customChipBreaker(x,y,z,clearance,retract,stock,depth,feedrate,incremen
   var g0 = g1 + chipBreakDistance;
   var stepCounter = 2;
   var currentIncrementalDepth = incrementalDepth;
-  var holeDepth = z + stock - depth;
+  // var holeDepth = z + stock - depth;
+  var holeDepth = z;
   var accumulatedRetract = accumulatedDepth;
   while(drilling){
     writeBlock(gMotionModal.format(1), pOutput.format(x), qOutput.format(y), zOutput.format(g1), feedOutput.format(feedrate));
@@ -1251,7 +1253,7 @@ function customChipBreaker(x,y,z,clearance,retract,stock,depth,feedrate,incremen
       drilling = false;
     }
     if( g1 < ( startDrillPos - accumulatedRetract ) ){
-      writeBlock(gMotionModal.format(0), pOutput.format(x), qOutput.format(y), zOutput.format(startDrillPos));
+      writeBlock(gMotionModal.format(0), pOutput.format(x), qOutput.format(y), zOutput.format(clearance));
       writeBlock(gMotionModal.format(0), pOutput.format(x), qOutput.format(y), zOutput.format(g0));
       accumulatedRetract = accumulatedRetract + accumulatedDepth;
       // writeComment(g0);
@@ -1260,6 +1262,7 @@ function customChipBreaker(x,y,z,clearance,retract,stock,depth,feedrate,incremen
     }
     // stepCounter++;
   }
+  writeBlock(gMotionModal.format(1), pOutput.format(x), qOutput.format(y), zOutput.format(g1), feedOutput.format(feedrate));
   writeBlock(gMotionModal.format(0), pOutput.format(x), qOutput.format(y), zOutput.format(z+clearance));
   // writeComment("g0: " + (z+clearance));
 }
@@ -2084,7 +2087,7 @@ function onCircular(clockwise, cx, cy, cz, x, y, z, feed) {
           writeBlock((gAbsIncModal.format(90)), gMotionModal.format(3.4), getMoveX(arcMidpoint.x), getMoveY(arcMidpoint.x), getMoveZ(arcMidpoint.z));
           writeBlock(getMoveX(x), getMoveY(x), getMoveZ(z));
         }else{
-          writeBlock((gAbsIncModal.format(90)), gMotionModal.format(18), gMotionModal.format(directionCode), pOutput.format(x), qOutput.format(y), zOutput.format(z), irOutput.format(cx - start.x, 0), jrOutput.format(cz - start.z, 0), getFeed(feed));
+          writeBlock((gAbsIncModal.format(90)), gMotionModal.format(18), gMotionModal.format(directionCode), pOutput.format(x), qOutput.format(y), zOutput.format(z), irOutput.format(cx - start.x, 0), krOutput.format(cz - start.z, 0), getFeed(feed));
         }
         // writeComment("lathe tool? " + latheTool);
         // writeBlock((gAbsIncModal.format(90)), gPlaneModal.format(19), gMotionModal.format(directionCode), xOutput.format(x), yOutput.format(y), zOutput.format(z), iOutput.format(cx - start.x, 0), kOutput.format(cz - start.z, 0), getFeed(feed));
@@ -2424,8 +2427,23 @@ function onCyclePoint(x, y, z) {
           // var flags=0;
           //call custom chipbreaking drilling cycle
           customChipBreaker(millx, milly, (millz-z), cycle.clearance, cycle.retract, cycle.stock, cycle.depth, cycle.feedrate, cycle.incrementalDepth, cycle.incrementalDepthReduction, cycle.minimumIncrementalDepth, cycle.accumulatedDepth, cycle.chipBreakDistance, cycle.dwell);
-        }else{
-          // expandCyclePoint(x, y, z);
+        }else if(!latheTool){
+          // expandCyclePoint(x, y, z);          writeComment("millx: " + millx + ", milly: " + milly + ", millz-z: " + (millz-z));
+          
+          writeComment("x "+x);
+          writeComment("y "+y);
+          writeComment("z "+z);
+          writeComment("clearence "+cycle.clearance);
+          writeComment("retract "+cycle.retract);
+          writeComment("stock "+cycle.stock);
+          writeComment("depth "+cycle.depth);
+          writeComment("feedrate "+cycle.feedrate);
+          writeComment("incrementalDepth "+cycle.incrementalDepth);
+          writeComment("incrementalDepthReduction "+cycle.incrementalDepthReduction);
+          writeComment("minimumIncrementalDepth "+cycle.minimumIncrementalDepth);
+          writeComment("accumulatedDepth "+cycle.accumulatedDepth);
+          writeComment("chipBreakDistance "+cycle.chipBreakDistance);
+          customChipBreaker(x, y, z, cycle.clearance, cycle.retract, cycle.stock, cycle.depth, cycle.feedrate, cycle.incrementalDepth, cycle.incrementalDepthReduction, cycle.minimumIncrementalDepth, cycle.accumulatedDepth, cycle.chipBreakDistance, cycle.dwell);
         }
       } else {
         writeBlock(
@@ -2477,7 +2495,7 @@ function onCyclePoint(x, y, z) {
       // writeComment(rpmFormat.getResultingValue(spindleSpeed));
       if (getProperty("isnc")) {
         writeBlock(
-          gCycleModal.format((getProperty("useRigidTapping") ? 84.2 : 84) + (tool.type == TOOL_TAP_LEFT_HAND ? 0.1 : 0)),
+          gCycleModal.format(98), gCycleModal.format((getProperty("useRigidTapping") ? 84.2 : 84) + (tool.type == TOOL_TAP_LEFT_HAND ? 0.1 : 0)),
           getCommonCycle(x, y, z, cycle.retract),
           conditional(P > 0, "P" + secFormat.format(P)),
           pitchOutput.format(F)
