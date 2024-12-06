@@ -2080,8 +2080,13 @@ function onCircular(clockwise, cx, cy, cz, x, y, z, feed) {
         // writeComment("rad1 " + arcRad + ", sectMidpoint " + sectMidpoint.x + ", " + sectMidpoint.z + ", arcAngle " + arcAngle);
         // writeComment("arcMidpoint " + arcMidpoint.x + ",  " + arcMidpoint.z);
         // writeComment("x start " + start.x + ", x " + x + ", cx " + cx + ", z start " + start.z + ", z " + z + ", cz " + cz);
-        writeBlock((gAbsIncModal.format(90)), gMotionModal.format(3.4), getMoveX(arcMidpoint.x), getMoveY(arcMidpoint.x), getMoveZ(arcMidpoint.z));
-        writeBlock(getMoveX(x), getMoveY(x), getMoveZ(z));
+        if(latheTool){
+          writeBlock((gAbsIncModal.format(90)), gMotionModal.format(3.4), getMoveX(arcMidpoint.x), getMoveY(arcMidpoint.x), getMoveZ(arcMidpoint.z));
+          writeBlock(getMoveX(x), getMoveY(x), getMoveZ(z));
+        }else{
+          writeBlock((gAbsIncModal.format(90)), gMotionModal.format(18), gMotionModal.format(directionCode), pOutput.format(x), qOutput.format(y), zOutput.format(z), irOutput.format(cx - start.x, 0), jrOutput.format(cz - start.z, 0), getFeed(feed));
+        }
+        // writeComment("lathe tool? " + latheTool);
         // writeBlock((gAbsIncModal.format(90)), gPlaneModal.format(19), gMotionModal.format(directionCode), xOutput.format(x), yOutput.format(y), zOutput.format(z), iOutput.format(cx - start.x, 0), kOutput.format(cz - start.z, 0), getFeed(feed));
         break;
       case PLANE_YZ:
