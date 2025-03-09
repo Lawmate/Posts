@@ -2703,13 +2703,13 @@ function onCyclePoint(x, y, z) {
                 if(broachingDist>broachRev){
                   reversalSteps = Math.floor(broachingDist/broachRev);
                   remainderDist = broachingDist - (broachRev * reversalSteps);
-                  // writeComment(reversalSteps);
-                  for( i=0;i<reversalSteps;i++){
+                  writeComment(reversalSteps);
+                  for( i=0;i<=reversalSteps;i++){
                     writeBlock(gMotionModal.format(1), pOutput.format(millx), qOutput.format(milly), zOutput.format(broachStart-(i*broachRev)), feedOutput.format(cycle.positioningFeedrate));
-                    if(cwBroaching){ //conditional to reverse spindle back and forth
+                    if(cwBroaching&&i){ //conditional to reverse spindle back and forth
                       cwBroaching = false;
                       writeBlock(mFormat.format(4),sOutput.format(tool.spindleRPM));
-                    }else{
+                    }else if(i){
                       cwBroaching = true;
                       writeBlock(mFormat.format(3),sOutput.format(tool.spindleRPM));
                     }
