@@ -265,10 +265,10 @@ properties = {
     group      : "MillTurn",
     type       : "integer",
     range      : [
-                  1,
+                  0,
                   9999
                 ],
-    value      : 0,
+    value      : 2,
     scope      : "post"
   }
 };
@@ -1381,10 +1381,10 @@ function onSection() {
   setDirectionX();
   var newWorkPlane = !isFirstSection && !isSameDirection(getPreviousSection().getGlobalFinalToolAxis(), currentSection.getGlobalInitialToolAxis());
   if (insertToolCall || newSpindle || newWorkOffset || newWorkPlane) {
-    writeComment("insertToolCall: " + insertToolCall);
-    writeComment("newSpindle: " + newSpindle);
-    writeComment("newWorkOffset: " + newWorkOffset);
-    writeComment("newWorkPlane: " + newWorkPlane);
+    // writeComment("insertToolCall: " + insertToolCall);
+    // writeComment("newSpindle: " + newSpindle);
+    // writeComment("newWorkOffset: " + newWorkOffset);
+    // writeComment("newWorkPlane: " + newWorkPlane);
     // retract to safe plane
     if (!isFirstSection() && insertToolCall) {
       onCommand(COMMAND_COOLANT_OFF);
@@ -1407,18 +1407,9 @@ function onSection() {
     var comment = getParameter("operation-comment");
     if (comment) {
       writeComment(comment);
+      if(tool.number)writeComment("T" + tool.number);
     }
   }
-  // if (hasParameter("operation-strategy")) {
-  //   var profile = getParameter("operation-strategy");
-  //   if (profile==='turningProfileRoughing') {
-  //   if (getParameter("operation-strategy")==='turningProfileRoughing') {
-  //     writeComment(profile);
-  //   }
-  // }
-  // writeBlock(gFormat.format(53), gFormat.format(0) + " Z0");
-  // currentWorkOffset = undefined;
-    // writeComment("notes: "+getParameter("notes")+", "+hasParameter("notes"));
 
   if (getProperty("showNotes") && hasParameter("notes")) {
     var notes = getParameter("notes");
@@ -1458,6 +1449,7 @@ function onSection() {
       temp = (tool.comment).split('broach ');
       data = temp[1];
       broachingTool = true;
+      latheTool = true;
     }else{
       data = tool.comment;
       liveTool = false;
@@ -1546,9 +1538,7 @@ function onSection() {
       }
     }else if(latheTool){
       writeBlock("T" + toolFormat.format(getProperty("partToolNumber")), mFormat.format(6));
-      // writeComment(getNextTool(2042));
-      writeComment(getNumberOfSections());
-      writeComment(sectionCounter);
+      writeComment("section number " + sectionCounter + " out of " + getNumberOfSections());
       var nextSection = 0;
       // writeComment(getSection(sectionCounter).getType());
       //cycle from this section to last section to check if there are any milling tools needed later
@@ -1564,10 +1554,10 @@ function onSection() {
       }
       var section;
       if( nextSection < sectionCounter ){
-        //if no more milling tools in program, call first tool
+        //if no more tools in program, call first tool
         section = getSection(0);
       }else{
-        //if there are more milling tools, call next tool
+        //if there are more tools, call next tool
         section = getSection(nextSection);
       }
       var sectionToolNumber = section.getTool().number;
@@ -2568,6 +2558,7 @@ function onCyclePoint(x, y, z) {
         liveTool?expandCyclePoint(millx, milly, millz):expandCyclePoint(x, y, z);
       } else {
         // writeComment(currentSection.getType()+", "+TYPE_TURNING);
+        writeComment("latheTool: " + latheTool + ", liveTool: " + liveTool);
         if(liveTool){
           writeBlock(
             gCycleModal.format(83),
@@ -2684,80 +2675,57 @@ function onCyclePoint(x, y, z) {
       break;
       case "gun-drilling":
         writeComment("gun drilling");
-        // if (P > 0 && !getProperty("isnc")) {
-        //   liveTool?expandCyclePoint(millx, milly, millz):expandCyclePoint(x, y, z);
-        // } else {
-        //   // writeComment(currentSection.getType()+", "+TYPE_TURNING);
+        
           if(liveTool){
-            
-            // expandCyclePoint(x, y, z);
-        //     writeBlock(
-        //       gCycleModal.format(83),
-        //       getCommonCycle(millx, milly, millz, ( tool.offsetz+cycle.retract ) ),
-        //       peckOutput.format(cycle.incrementalDepth),
-        //       conditional(P > 0, "P" + secFormat.format(P)),
-        //       feedOutput.format(F)
-        //     );
+            //fill in for gun drilling cycle using live tools
               
           }else if(latheTool && !liveTool){
             //Expanded cycle
-            writeComment("millz: " + millz);
             writeBlock(gMotionModal.format(0), pOutput.format(millx), qOutput.format(milly));
             writeBlock(gMotionModal.format(0), zOutput.format(tool.offsetz+cycle.retract));
-            if(cycle.stopSpindle){
+            if(cycle.stopSpindle==1){
               onCommand(COMMAND_STOP_SPINDLE);
             }else{
               writeBlock(mFormat.format(3),sOutput.format(cycle.positioningSpindleSpeed));
             }
             writeBlock(gMotionModal.format(1), pOutput.format(millx), qOutput.format(milly), zOutput.format(tool.offsetz-cycle.startingDepth+cycle.stock), feedOutput.format(cycle.positioningFeedrate));
-            writeBlock(mFormat.format(3),sOutput.format(tool.spindleRPM))
-            if(broachingTool && broachReversal.value>0){
-              var broachStart = tool.offsetz-cycle.startingDepth+cycle.stock;
-              var broachingDist = broachStart-(tool.offsetz+cycle.bottom);
-              var reversalSteps = 0;
-              var remainderDist = 0;
-              var cwBroaching = true;
-              if(broachingDist>broachReversal.value){
-                reversalSteps = Math.floor(broachReversal.value/broachingDist);
-                remainderDist = broachingDist - (broachingReversal.value * reversalSteps);
-                for( i=0;i<reversalSteps;i++){
-                  writeBlock(gMotionModal.format(1), pOutput.format(millx), qOutput.format(milly), zOutput.format(broachStart-(i*broachingReversal.value)), feedOutput.format(cycle.positioningFeedrate));
-                  if(cwBroaching){ //conditional to reverse spindle back and forth
-                    cwBroaching = false;
-                    writeBlock(mFormat.format(4),sOutput.format(tool.spindleRPM));
-                  }else{
-                    cwBroaching = true;
-                    writeBlock(mFormat.format(3),sOutput.format(tool.spindleRPM));
+            writeBlock(mFormat.format(3),sOutput.format(tool.spindleRPM));
+            // broachingTool = true;
+            var broachRev = getProperty("broachReversal");
+            if(broachingTool && broachRev>0){
+              if(broachingTool){
+                var broachStart = tool.offsetz-cycle.startingDepth+cycle.stock;
+                var broachingDist = broachStart-(tool.offsetz+cycle.bottom);
+                var reversalSteps = 0;
+                var remainderDist = 0;
+                var cwBroaching = true;
+
+                if(broachingDist>broachRev){
+                  reversalSteps = Math.floor(broachingDist/broachRev);
+                  remainderDist = broachingDist - (broachRev * reversalSteps);
+                  // writeComment(reversalSteps);
+                  for( i=0;i<reversalSteps;i++){
+                    writeBlock(gMotionModal.format(1), pOutput.format(millx), qOutput.format(milly), zOutput.format(broachStart-(i*broachRev)), feedOutput.format(cycle.positioningFeedrate));
+                    if(cwBroaching){ //conditional to reverse spindle back and forth
+                      cwBroaching = false;
+                      writeBlock(mFormat.format(4),sOutput.format(tool.spindleRPM));
+                    }else{
+                      cwBroaching = true;
+                      writeBlock(mFormat.format(3),sOutput.format(tool.spindleRPM));
+                    }
                   }
+                  writeBlock(gMotionModal.format(1), pOutput.format(millx), qOutput.format(milly), zOutput.format(tool.offsetz+cycle.bottom), feedOutput.format(cycle.positioningFeedrate));
                 }
+
+              }else{
                 writeBlock(gMotionModal.format(1), pOutput.format(millx), qOutput.format(milly), zOutput.format(tool.offsetz+cycle.bottom), feedOutput.format(cycle.positioningFeedrate));
               }
-
-            }else{
-              writeBlock(gMotionModal.format(1), pOutput.format(millx), qOutput.format(milly), zOutput.format(tool.offsetz+cycle.bottom), feedOutput.format(cycle.positioningFeedrate));
-            }
             writeBlock(gMotionModal.format(1), pOutput.format(millx), qOutput.format(milly), zOutput.format(tool.offsetz-cycle.startingDepth+cycle.stock), feedOutput.format(cycle.positioningFeedrate));
             onCommand(COMMAND_STOP_SPINDLE);
             writeBlock(gMotionModal.format(1), pOutput.format(millx), qOutput.format(milly), zOutput.format(tool.offsetz+cycle.retract), feedOutput.format(cycle.positioningFeedrate));
             
-      // expandCyclePoint(millx, milly,99);
-        //     writeBlock(
-        //       gPlaneModal.format(17),
-        //       gCycleModal.format(83),
-        //       getCommonCycle(millx, milly, millz, ( tool.offsetz+cycle.retract ) ),
-        //       peckOutput.format(cycle.incrementalDepth),
-        //       conditional(P > 0, "P" + secFormat.format(P)),
-        //       feedOutput.format(F)
-        //     );
-        //   }else{
-        //     writeBlock(
-        //       gCycleModal.format(98), gAbsIncModal.format(90), gCycleModal.format(83),
-        //       getCommonCycle(x, y, z, cycle.retract),
-        //       "Q" + xyzFormat.format(cycle.incrementalDepth),
-        //       feedOutput.format(F)
-        //     );
           }
-        // }
+        }
         break;
     default:
       if (tapping) {
@@ -2938,6 +2906,7 @@ function startSpindle(tappingMode, forceRPMMode, initialPosition) {
       spindleMode = getCode("CONSTANT_SURFACE_SPEED_ON");
     }
   } else {
+    // writeComment("speed: " + spindleSpeed);
     _spindleSpeed = spindleSpeed;
     spindleMode = getCode("CONSTANT_SURFACE_SPEED_OFF");
   }
@@ -2970,11 +2939,13 @@ function startSpindle(tappingMode, forceRPMMode, initialPosition) {
     // )
   } else {
     // writeComment("here");
-    writeBlock(
-      spindleMode,
-      sOutput.format(_spindleSpeed),
-      spindleDir
-    );
+    if(_spindleSpeed){
+      writeBlock(
+        spindleMode,
+        sOutput.format(_spindleSpeed),
+        spindleDir
+      );
+    }
   }
   // wait for spindle here if required
 }
