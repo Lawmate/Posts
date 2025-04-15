@@ -2176,9 +2176,9 @@ function onCircular(clockwise, cx, cy, cz, x, y, z, feed) {
         var sectMidpoint = { x : (x + start.x ) / 2 , z : ( z + start.z ) / 2 };
         var arcAngle = Math.atan2(sectMidpoint.z-cz, sectMidpoint.x-cx);
         var arcMidpoint = { x : ( Math.cos( arcAngle ) * arcRad ) + cx, z : ( Math.sin( arcAngle ) * arcRad ) + cz };
-        // writeComment("rad1 " + arcRad + ", sectMidpoint " + sectMidpoint.x + ", " + sectMidpoint.z + ", arcAngle " + arcAngle);
-        // writeComment("arcMidpoint " + arcMidpoint.x + ",  " + arcMidpoint.z);
-        // writeComment("x start " + start.x + ", x " + x + ", cx " + cx + ", z start " + start.z + ", z " + z + ", cz " + cz);
+        writeComment("rad1 " + arcRad + ", sectMidpoint " + sectMidpoint.x + ", " + sectMidpoint.z + ", arcAngle " + arcAngle);
+        writeComment("arcMidpoint " + arcMidpoint.x + ",  " + arcMidpoint.z);
+        writeComment("x start " + start.x + ", x " + x + ", cx " + cx + ", z start " + start.z + ", z " + z + ", cz " + cz);
         if(latheTool){
           writeBlock((gAbsIncModal.format(90)), gMotionModal.format(3.4), getMoveX(arcMidpoint.x), getMoveY(arcMidpoint.x), getMoveZ(arcMidpoint.z));
           writeBlock(getMoveX(x), getMoveY(x), getMoveZ(z));
@@ -2704,7 +2704,7 @@ function onCyclePoint(x, y, z) {
                   reversalSteps = Math.floor(broachingDist/broachRev);
                   remainderDist = broachingDist - (broachRev * reversalSteps);
                   writeComment(reversalSteps);
-                  for( i=0;i<=reversalSteps;i++){
+                  for( i=0;i<=reversalSteps;i++){ 
                     writeBlock(gMotionModal.format(1), pOutput.format(millx), qOutput.format(milly), zOutput.format(broachStart-(i*broachRev)), feedOutput.format(cycle.positioningFeedrate));
                     if(cwBroaching&&i){ //conditional to reverse spindle back and forth
                       cwBroaching = false;
