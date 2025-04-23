@@ -2092,6 +2092,13 @@ function onMovement(moves){
 }
 
 function onCircular(clockwise, cx, cy, cz, x, y, z, feed) {
+  cx = Math.round(cx*10000)/10000;
+  cy = Math.round(cy*10000)/10000;
+  cz = Math.round(cz*10000)/10000;
+  x = Math.round(x*10000)/10000;
+  y = Math.round(y*10000)/10000;
+  z = Math.round(z*10000)/10000;
+  // writeComment("Test x: " + x);
   if (isSpeedFeedSynchronizationActive()) {
     error(localize("Speed-feed synchronization is not supported for circular moves."));
     return;
@@ -2103,6 +2110,9 @@ function onCircular(clockwise, cx, cy, cz, x, y, z, feed) {
   }
 
   var start = getCurrentPosition();
+  start.x = Math.round(start.x*10000)/10000;
+  start.y = Math.round(start.y*10000)/10000;
+  start.z = Math.round(start.z*10000)/10000;
   var directionCode = (toolingData.toolPost == REAR) ? (clockwise ? 2 : 3) : (clockwise ? 3 : 2);
   var pln = getCircularPlane();
   // writeComment("current x " + start.x + ", current y " + start.y + ", current z " + start.z);
@@ -2172,16 +2182,24 @@ function onCircular(clockwise, cx, cy, cz, x, y, z, feed) {
         writeBlock((gAbsIncModal.format(90)), gPlaneModal.format(17), gMotionModal.format(directionCode), pOutput.format(x), qOutput.format(y), zOutput.format(z), irOutput.format(cx - start.x, 0), jrOutput.format(cy - start.y, 0), getFeed(feed));
         break;
       case PLANE_ZX:
-        var arcRad = Math.sqrt(Math.pow(Math.abs(x-cx),2)+Math.pow(Math.abs(z-cz),2));
-        var sectMidpoint = { x : (x + start.x ) / 2 , z : ( z + start.z ) / 2 };
-        var arcAngle = Math.atan2(sectMidpoint.z-cz, sectMidpoint.x-cx);
-        var arcMidpoint = { x : ( Math.cos( arcAngle ) * arcRad ) + cx, z : ( Math.sin( arcAngle ) * arcRad ) + cz };
-        writeComment("rad1 " + arcRad + ", sectMidpoint " + sectMidpoint.x + ", " + sectMidpoint.z + ", arcAngle " + arcAngle);
+        var arcRad = Math.round((Math.sqrt(Math.pow(Math.abs(x-cx),2)+Math.pow(Math.abs(z-cz),2)))*10000)/10000;
+        var sectMidpoint = { x : Math.round(((x + start.x ) / 2)*10000)/10000 , z : Math.round((( z + start.z ) / 2)*10000)/10000 };
+        var arcAngle = Math.round((Math.atan2(sectMidpoint.z-cz, sectMidpoint.x-cx))*10000)/10000;
+        var arcMidpoint = { x : Math.round(((Math.cos( arcAngle ) * arcRad ) + cx)*10000)/10000, z : Math.round((( Math.sin( arcAngle ) * arcRad ) + cz)*10000)/10000 };
+        writeComment("rad1 " + arcRad + ", sectMidpoint X" + sectMidpoint.x + ", Z" + sectMidpoint.z + ", arcAngle " + arcAngle);
         writeComment("arcMidpoint " + arcMidpoint.x + ",  " + arcMidpoint.z);
         writeComment("x start " + start.x + ", x " + x + ", cx " + cx + ", z start " + start.z + ", z " + z + ", cz " + cz);
         if(latheTool){
-          writeBlock((gAbsIncModal.format(90)), gMotionModal.format(3.4), getMoveX(arcMidpoint.x), getMoveY(arcMidpoint.x), getMoveZ(arcMidpoint.z));
-          writeBlock(getMoveX(x), getMoveY(x), getMoveZ(z));
+          if(Math.abs(arcMidpoint.x-x)<0.001 || Math.abs(arcMidpoint.z-z) < 0.001){
+            // writeBlock((gAbsIncModal.format(90)), gMotionModal.format(1), getMoveX(x), getMoveY(x), getMoveZ(z));
+            writeComment("tiny move");
+          }//else{
+            gMotionModal.reset();
+            forceXYZ();
+            writeBlock((gAbsIncModal.format(90)), gMotionModal.format(3.4), getMoveX(arcMidpoint.x), getMoveY(arcMidpoint.x), getMoveZ(arcMidpoint.z));
+            forceXYZ();
+            writeBlock(getMoveX(x), getMoveY(x), getMoveZ(z));
+          // }
         }else{
           writeBlock((gAbsIncModal.format(90)), gMotionModal.format(18), gMotionModal.format(directionCode), pOutput.format(x), qOutput.format(y), zOutput.format(z), irOutput.format(cx - start.x, 0), krOutput.format(cz - start.z, 0), getFeed(feed));
         }
@@ -2286,10 +2304,12 @@ function getStartEndSequenceNumber(cyclePath, start) {
 
 function getCommonCycle(x, y, z, r) {
   forceXYZ(); // force xyz for turning
-  // writeComment("x: " + x + ", y: " + y);
-  return [pOutput.format(x), qOutput.format(y),
+  // writeComment("x: " + x + ", y: " + y + ", z: " + z + ", r: " + r);
+  return [pOutput.format(x), 
+    qOutput.format(y),
     zOutput.format(z),
     "R" + spatialFormat.format(r)];
+  // return [x,y,z,r];
 }
 
 function getThreadStockPoints(x, y, z) {
@@ -2326,10 +2346,16 @@ function getThreadStockPoints(x, y, z) {
 var threadNumber = 0;
 var numberOfThreads = 1;
 function onCyclePoint(x, y, z) {
-  
-  var millx = tool.offsetx+getProperty("blockCentreX");
-  var milly = tool.offsety+getProperty("blockCentreY");
-  var millz = tool.offsetz+z;
+  var millx, milly, millz;
+  if(isMilling && !latheTool){
+    millx = x
+    milly = y
+    millz = z;
+  }else{
+    millx = tool.offsetx+getProperty("blockCentreX");
+    milly = tool.offsety+getProperty("blockCentreY");
+    millz = tool.offsetz+z;
+  }
   // var f = getFeed( feed );
   if (isSameDirection(currentSection.workPlane.forward, new Vector(0, 0, 1)) ||
       isSameDirection(currentSection.workPlane.forward, new Vector(0, 0, -1))) {
@@ -2591,8 +2617,10 @@ function onCyclePoint(x, y, z) {
     case "left-tapping":
     case "right-tapping":
       F = tool.getThreadPitch() * rpmFormat.getResultingValue(spindleSpeed);
-      writeComment("retract " + cycle.retract + ", millz " + millz);
+      // writeComment("retract " + cycle.retract + ", millz " + millz);
       if (getProperty("isnc")) {
+        isMilling?tool.offsetz=0:tool.offsetz;
+        // writeComment(millx);
         writeBlock(gMotionModal.format(0), pOutput.format(millx), qOutput.format(milly));
         writeBlock(gMotionModal.format(0), pOutput.format(millx), qOutput.format(milly), zOutput.format(tool.offsetz+(cycle.retract)));
         writeBlock(mFormat.format(29)); // rigid
