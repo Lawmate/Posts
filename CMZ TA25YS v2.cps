@@ -4337,6 +4337,7 @@ function parseToggle() {
   return stat;
 }
 
+
 var currentCoolantMode = COOLANT_OFF;
 var currentCoolantTurret = 1;
 var coolantOff = undefined;
