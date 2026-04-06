@@ -23,7 +23,7 @@ programNameIsInteger = true;
 setCodePage("ascii");
 
 capabilities = CAPABILITY_TURNING | CAPABILITY_MILLING | CAPABILITY_MACHINE_SIMULATION;
-tolerance = spatial(0.002, MM);
+tolerance = spatial(0.001, MM);
 
 minimumChordLength = spatial(0.01, MM);
 minimumCircularRadius = spatial(0.01, MM);
@@ -270,7 +270,27 @@ properties = {
                 ],
     value      : 2,
     scope      : "post"
-  }
+  },
+  safeToolChange: {
+    title      : "Safe tool change position",
+    description: "Move to 0,0 when using the ATC",
+    group      : "MillTurn",
+    type       : "boolean",
+    value      : true,
+    scope      : "post"
+  },
+  ArcMoves: {
+    title      : "Arc moves",
+    description: "Select method for moving along arcs",
+    group      : "MillTurn",
+    type       : "enum",
+    values     : [
+      {title:"3D arc", id:"3dArc"},
+      {title:"Linear", id:"Lin"}
+    ],
+    value: "Lin",
+    scope: "post"
+  },
 };
 
 groupDefinitions = {
@@ -1392,10 +1412,25 @@ function onSection() {
     // writeBlock("T" + toolFormat.format(getProperty("partToolNumber")) + " " + mFormat.format(6));
     writeBlock(gFormat.format(17));
     // writeBlock(mFormat.format(5));
-    onCommand(COMMAND_STOP_SPINDLE);
+    // writeComment(isLastSection());
+    // onCommand(COMMAND_STOP_SPINDLE);
     writeRetract();
     forceXYZ();
     writeBlock(gFormat.format(0), mFormat.format(140));
+    
+    var getLastSection = getSection(sectionCounter>1?sectionCounter-2:0);
+    var lastSectionType = getLastSection.getType();
+    writeComment(sectionCounter);
+    if(lastSectionType != 1 &&
+      !getLastSection.getTool().comment.startsWith("livetool") &&
+      !getLastSection.getTool().comment.startsWith("X") ){
+      writeComment("Move to zero position for tool call");
+      //check for safe tool change position option
+      if(getProperty("safeToolChange")){
+        writeBlock(gMotionModal.format(53), gMotionModal.format(0), pOutput.format(0), qOutput.format(0));
+        writeBlock(gFormat.format(53 + currentSection.workOffset));
+      }
+    }
   }
   
   //Load the work holding tool
@@ -1436,6 +1471,7 @@ function onSection() {
     }
   }
   var isRoughing = false;
+  // if (tool.comment||Number(tool.number)==Number(getProperty("partToolNumber"))) {
   if (tool.comment) {
     // var xoff = /(?:x)([0-9]+)/.test(tool.comment);
     var data;
@@ -1483,7 +1519,7 @@ function onSection() {
       writeComment(getParameter('operation:isRoughingStrategy'));
       isRoughing = true;
     }
-    writeComment(2*(Math.abs(Math.max(getParameter("stock-lower-x"),getParameter("stock-lower-y")))));
+    // writeComment(2*(Math.abs(Math.max(getParameter("stock-lower-x"),getParameter("stock-lower-y")))));
 
     if(hasParameter('operation:tool_type')){
       if(getParameter('operation:tool_type')==='turning boring' && !getParameter('operation:tool_clockwise')){
@@ -1502,8 +1538,9 @@ function onSection() {
         ODboring = false;
       }
     }
-
-    if(tool.type===1){
+    //check if drilling or tapping operation is occuring
+    // writeComment("check");
+    if(tool.type===1||tool.type===15){
       writeComment("turned part drill");
       latheDrill = true;
     }else{
@@ -1517,37 +1554,76 @@ function onSection() {
   // writeComment(insertToolCall+", "+tool.getNumber());
   if (insertToolCall) {
     // onCommand(COMMAND_COOLANT_OFF);
-
+    
     if (!isFirstSection() && getProperty("optionalStop")) {
       onCommand(COMMAND_OPTIONAL_STOP);
     }
+
     // writeComment("here");
-    if(!liveTool && !latheTool){
+    if(!liveTool && !latheTool && Number(tool.number)!=Number(getProperty("partToolNumber"))){
+
+      //check for safe tool change position option
+      if(getProperty("safeToolChange")){
+          writeBlock(gMotionModal.format(53), gMotionModal.format(0), pOutput.format(0), qOutput.format(0));
+          writeBlock(gFormat.format(53 + currentSection.workOffset));
+      }
 
       writeBlock("T" + toolFormat.format(tool.number), mFormat.format(6));
       var nextTool = getNextTool(tool.number);
       if (nextTool) {
-        writeBlock("T" + toolFormat.format(nextTool.number));
+        if(getSection(sectionCounter).getType()==1){
+          writeComment("lathe tool");
+          writeBlock("T" + getProperty("partToolNumber"));
+        }else{
+          writeBlock("T" + toolFormat.format(nextTool.number));
+        }
       } else {
         // preload first tool
         var section = getSection(0);
         var firstToolNumber = section.getTool().number;
-        if (tool.number != firstToolNumber) {
+        // writeComment(section.getType());
+        
+        if(section.getType()==1){
+          // writeComment("lathe tool");
+          writeBlock("T" + toolFormat.format(getProperty("partToolNumber")));
+        }else{
           writeBlock("T" + toolFormat.format(firstToolNumber));
         }
       }
     }else if(latheTool){
-      writeBlock("T" + toolFormat.format(getProperty("partToolNumber")), mFormat.format(6));
-      writeComment("section number " + sectionCounter + " out of " + getNumberOfSections());
+      var callTool = true;
+      //if not the first section, and if the previous section was not a lathe section
+      //Call tool if it's the first section
+      if(sectionCounter==1) callTool = true;
+      //Call tool if the previous section wasn't a turning section
+      if(sectionCounter>1 && getSection(sectionCounter-1).getType()!=1) callTool = true;
+      //Don't call tool if the last section was with live tools
+      if(sectionCounter>2 && getSection(sectionCounter-2).getTool().comment.startsWith("livetool")) callTool = false;
+      //Don't call tool if the last section had tooling block tools with a offset in the comment
+      if(sectionCounter>2 && getSection(sectionCounter-2).getTool().comment.startsWith("X")) callTool = false;
+      
+      if(callTool){
+        writeBlock("T" + toolFormat.format(getProperty("partToolNumber")), mFormat.format(6));
+      }
+      // if((sectionCounter==1)||(sectionCounter>1 && getSection(sectionCounter-1).getType()!=1)){
+      //   // writeComment(getSection(sectionCounter-1).getType());
+      //   writeBlock("T" + toolFormat.format(getProperty("partToolNumber")), mFormat.format(6));
+      //   writeComment("section number " + sectionCounter + " out of " + getNumberOfSections());
+      // }
+      // if(sectionCounter>2 && getSection(sectionCounter-2).getTool().comment.startsWith("livetool")){
+      //   writeComment("previous section was a live tool");
+      // }
       var nextSection = 0;
       // writeComment(getSection(sectionCounter).getType());
       //cycle from this section to last section to check if there are any milling tools needed later
       for( var i = sectionCounter-1; i < getNumberOfSections(); i++ ){
         // writeComment(getSection(i).getType());
         // var section = getSection(i);
-        if(getSection(i).getType()==1){
+        if(getSection(i).getType()!=1 &&
+        !getSection(i).getTool().comment.startsWith("livetool") &&
+        !getSection(i).getTool().comment.startsWith("X") &&
+        getSection(i).getTool().number!=Number(getProperty("partToolNumber"))){
 
-        }else{
           nextSection = i;
           i = getNumberOfSections()+1;//increment counter to break out of loop
         }
@@ -1561,7 +1637,8 @@ function onSection() {
         section = getSection(nextSection);
       }
       var sectionToolNumber = section.getTool().number;
-      if (getProperty("partToolNumber") != sectionToolNumber) {
+      // if (getProperty("partToolNumber") != sectionToolNumber) {
+      if (callTool && section.getTool().number!=Number(getProperty("partToolNumber")) && section.getType()!=1) {
         writeBlock("T" + toolFormat.format(sectionToolNumber));
       }
       // .getType() != TYPE_TURNING
@@ -1641,7 +1718,7 @@ function onSection() {
     }
   }
 
-  writeBlock(gFormat.format(0), mFormat.format(140));
+  // writeBlock(gFormat.format(0), mFormat.format(140));
 
   if(latheDrill){
     var millx = tool.offsetx+getProperty("blockCentreX");
@@ -2000,13 +2077,15 @@ function onLinear(_x, _y, _z, feed) {
           var speedTemp = startingSpeed + increment;
           var moveTemp = getCSSmove( speedTemp );
           var movefraction = ( moveTemp - startX ) / xDist;
-          var zFraction = startZ + ( zDistance * movefraction );
+          var zFraction = startZ + ( zDistance * Math.abs(movefraction) );
+          // writeComment("zFraction: " + zFraction + ", startZ: " + startZ + ", zDistance: " + zDistance + ", movefraction: " + movefraction);
           var feedTemp = getCSSFeed( speedTemp );
           var tempX = getMoveX( moveTemp );
           var tempY = getMoveY( moveTemp );
           var teeemp = moveTemp;
           // writeComment(zFraction);
           var tempZ = getMoveZ( zFraction );
+          // writeComment(tempZ);
           var tempF = getFeed(feed);
           // writeComment( "feed " + gFeedModeModal.getCurrent() );
           // writeComment( "feed " + ( speedTemp * feed ) );
@@ -2189,17 +2268,53 @@ function onCircular(clockwise, cx, cy, cz, x, y, z, feed) {
         writeComment("rad1 " + arcRad + ", sectMidpoint X" + sectMidpoint.x + ", Z" + sectMidpoint.z + ", arcAngle " + arcAngle);
         writeComment("arcMidpoint " + arcMidpoint.x + ",  " + arcMidpoint.z);
         writeComment("x start " + start.x + ", x " + x + ", cx " + cx + ", z start " + start.z + ", z " + z + ", cz " + cz);
+        writeComment("rad: " + this.radius + ", sweep: " + (this.sweep)/(Math.PI / 180));
+
         if(latheTool){
-          if(Math.abs(arcMidpoint.x-x)<0.001 || Math.abs(arcMidpoint.z-z) < 0.001){
-            // writeBlock((gAbsIncModal.format(90)), gMotionModal.format(1), getMoveX(x), getMoveY(x), getMoveZ(z));
-            writeComment("tiny move");
-          }//else{
-            gMotionModal.reset();
-            forceXYZ();
-            writeBlock((gAbsIncModal.format(90)), gMotionModal.format(3.4), getMoveX(arcMidpoint.x), getMoveY(arcMidpoint.x), getMoveZ(arcMidpoint.z));
-            forceXYZ();
-            writeBlock(getMoveX(x), getMoveY(x), getMoveZ(z));
-          // }
+          if(getProperty("ArcMoves")=="Lin"){
+            // Calculate the end angle from the end point
+            const endAngle = Math.atan2(z - cz, x - cx);
+            
+            // Convert sweep angle to radians
+            const sweepAngle = clockwise?this.sweep:-this.sweep;
+            
+            // Calculate start angle by subtracting sweep from end angle
+            const startAngle = endAngle - sweepAngle;
+            
+            // Calculate the angle subtended by a chord that produces the max deviation
+            const maxAngleStep = 2 * Math.acos(1 - tolerance / this.radius);
+            
+            // Use absolute sweep angle for segment calculation
+            const absSweepAngle = Math.abs(sweepAngle);
+            
+            // Calculate number of segments needed
+            const numSegments = Math.ceil(absSweepAngle / maxAngleStep);
+            const actualAngleStep = sweepAngle / numSegments;
+            writeComment("number of segments in arc: " + numSegments);
+            // writeComment(clockwise);
+            // Generate points
+            const arcPoints = [];
+            for (let i = 0; i <= numSegments; i++) {
+              const angle = startAngle + i * actualAngleStep;
+              arcPoints.push({
+                x: cx + this.radius * Math.cos(angle),
+                z: cz + this.radius * Math.sin(angle)
+              });
+              // writeComment("x: " + arcPoints[i].x + ", z: " + arcPoints[i].z );
+              writeBlock(getMoveX(arcPoints[i].x), getMoveY(arcPoints[i].x), getMoveZ(arcPoints[i].z));
+            }
+          }if(getProperty("ArcMoves")=="3dArc"){
+            if(Math.abs(arcMidpoint.x-x)<0.005 || Math.abs(arcMidpoint.z-z) < 0.005){
+              // writeBlock((gAbsIncModal.format(90)), gMotionModal.format(1), getMoveX(x), getMoveY(x), getMoveZ(z));
+              writeComment("tiny move");
+              // writeBlock(getMoveX(x), getMoveY(x), getMoveZ(z));
+            }//else{
+              gMotionModal.reset();
+              forceXYZ();
+              writeBlock((gAbsIncModal.format(90)), gMotionModal.format(3.4), getMoveX(arcMidpoint.x), getMoveY(arcMidpoint.x), getMoveZ(arcMidpoint.z));
+              forceXYZ();
+              writeBlock(getMoveX(x), getMoveY(x), getMoveZ(z));
+          }
         }else{
           writeBlock((gAbsIncModal.format(90)), gMotionModal.format(18), gMotionModal.format(directionCode), pOutput.format(x), qOutput.format(y), zOutput.format(z), irOutput.format(cx - start.x, 0), krOutput.format(cz - start.z, 0), getFeed(feed));
         }
@@ -2308,7 +2423,8 @@ function getCommonCycle(x, y, z, r) {
   return [pOutput.format(x), 
     qOutput.format(y),
     zOutput.format(z),
-    "R" + spatialFormat.format(r)];
+    "R" + spatialFormat.format(r),
+  ];
   // return [x,y,z,r];
 }
 
@@ -2509,12 +2625,34 @@ function onCyclePoint(x, y, z) {
     }
     switch (cycleType) {
     case "drilling":
-      writeBlock(
-        gCycleModal.format(81),
-        getCommonCycle(millx, milly, millz, tool.offsetz+cycle.retract),
-        feedOutput.format(F)
-      );
+      writeComment("latheTool: " + latheTool + ", liveTool: " + liveTool);
+      if(liveTool){
+        writeBlock(
+          gCycleModal.format(81),
+          getCommonCycle(millx, milly, millz, ( tool.offsetz+cycle.retract ) ),
+          peckOutput.format(cycle.incrementalDepth),
+          feedOutput.format(F)
+        );
+          
+      }else if(latheTool && !liveTool){
+        writeBlock(
+          gPlaneModal.format(17),
+          gCycleModal.format(81),
+          getCommonCycle(millx, milly, millz, ( tool.offsetz+cycle.retract ) ),
+          peckOutput.format(cycle.incrementalDepth),
+          feedOutput.format(F)
+        );
+
+      }else{
+        writeBlock(
+          gCycleModal.format(98), gAbsIncModal.format(90), gCycleModal.format(81),
+          getCommonCycle(x, y, z, cycle.retract),
+          feedOutput.format(F)
+        );
+        
+      }
       break;
+
     case "counter-boring":
       if (P > 0) {
         writeBlock(
@@ -2619,7 +2757,7 @@ function onCyclePoint(x, y, z) {
       F = tool.getThreadPitch() * rpmFormat.getResultingValue(spindleSpeed);
       // writeComment("retract " + cycle.retract + ", millz " + millz);
       if (getProperty("isnc")) {
-        isMilling?tool.offsetz=0:tool.offsetz;
+        (isMilling&&!latheTool)?tool.offsetz=0:tool.offsetz;
         // writeComment(millx);
         writeBlock(gMotionModal.format(0), pOutput.format(millx), qOutput.format(milly));
         writeBlock(gMotionModal.format(0), pOutput.format(millx), qOutput.format(milly), zOutput.format(tool.offsetz+(cycle.retract)));

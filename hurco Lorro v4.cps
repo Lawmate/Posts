@@ -43,6 +43,7 @@ properties = {
   showSequenceNumbers: true, // show sequence numbers
   sequenceNumberStart: 1, // first sequence number
   sequenceNumberIncrement: 1, // increment for sequence numbers
+  broachReversal: 1,
   optionalStop: true, // optional stop
   isnc: true, // specifies the mode ISNC (ISO NC mode) or BNC (Basic NC mode)
   separateWordsWithSpace: true, // specifies that the words should be separated with a white space
@@ -83,6 +84,13 @@ propertyDefinitions = {
       {title:"G53", id: "G53"},
       {title:"Clearance Height", id: "clearanceHeight"}
     ]
+  },
+  broachReversal: {
+    title      : "Broaching tool reversal distance",
+    description: "This is the distance after which the spindle reverses when using a broach tool, to get a straight hole. Zero denotes no reversing.",
+    group:1,
+    type       : "integer",
+    range      : [0,9999]
   }
 };
 
@@ -208,6 +216,7 @@ function onPassThrough(text) {
   for (text in commands) {
     if(commands[text]==='front'){
       writeComment("Move to front");
+      setCoolant(COOLANT_OFF);
       writeBlock(gFormat.format(53), gMotionModal.format(0), zOutput.format(0));
       writeBlock(gFormat.format(53), gMotionModal.format(0), xOutput.format(300), yOutput.format(405));
       writeBlock(mFormat.format(0));
@@ -740,6 +749,11 @@ function getWorkPlaneMachineABC(workPlane) {
   return abc;
 }
 
+var isBroach = false;
+var isAlignmentOp = false;
+var isDispenser = false; //flag to see if it is magnet or adhesive dispenser
+var isRefill = false; //flag for adhesive dispenser refilling
+
 function onSection() {
   var insertToolCall = isFirstSection() ||
     currentSection.getForceToolChange && currentSection.getForceToolChange() ||
@@ -783,11 +797,7 @@ function onSection() {
     }
   }
 
-  var isBroach = false;
-  var isAlignmentOp = false;
-  var isDispenser = false; //flag to see if it is magnet or adhesive dispenser
-  var isRefill = false; //flag for adhesive dispenser refilling
-  if(tool.comment==="broach"){
+  if(tool.comment==="broach"||(tool.comment).startsWith("broach")){
     isBroach = true;
     writeComment("it's a broach operation");
     if(getParameter("operation-strategy")==="path3d"){
@@ -808,6 +818,8 @@ function onSection() {
       // );
       writeBlock("M1");
     }
+  }else{
+    isBroach=false;
   }
 
   if(tool.comment==="dispenser"){
@@ -901,15 +913,15 @@ function onSection() {
     forceSpindleSpeed = false;
     
     if (spindleSpeed < 1) {
-      error(localize("Spindle speed out of range."));
-      return;
+      // error(localize("Spindle speed out of range."));
+      // return;
     }
-    if (spindleSpeed > 65535) {
+    if (spindleSpeed > 10000) {
       warning(localize("Spindle speed exceeds maximum value."));
     }
     
     if(isBroach){ //if this operation is the alignment op, have no spindle
-      writeBlock("M19 Q0");
+      writeBlock("M19 S0");
       // if(isAlignmentOp){
       //   writeBlock("M19 Q0");
       // }else{
@@ -1296,9 +1308,10 @@ function onCyclePoint(x, y, z) {
           writeBlock(
             gRetractModal.format(98), gAbsIncModal.format(90), gCycleModal.format(82),
             getCommonCycle(x, y, z, cycle.retract),
-            "P" + secFormat.format(P), // not optional
+            "P" + secFormat.format(cycle.dwell), // not optional
             feedOutput.format(F)
           );
+          // writeComment(cycle.dwell);
         } else { // BNC mode
           writeBlock(
             gRetractModal.format(98), gAbsIncModal.format(90), gCycleModal.format(82),
@@ -1324,7 +1337,7 @@ function onCyclePoint(x, y, z) {
       }
       break;
     case "chip-breaking":
-      if ((cycle.accumulatedDepth < cycle.depth) || (P > 0)) {
+      if ((cycle.accumulatedDepth < (2*cycle.depth)) || (P > 0)) {
         expandCyclePoint(x, y, z);
       } else {
         if (properties.isnc) {
@@ -1946,6 +1959,69 @@ function onCyclePoint(x, y, z) {
         return;
       }
       break;
+      case "gun-drilling":
+        writeComment("gun drilling");
+        
+          // if(liveTool){
+          //   //fill in for gun drilling cycle using live tools
+        var millx = x;
+        var milly = y;
+        var millz = z;
+      // }else if(latheTool && !liveTool){
+        //Expanded cycle
+        writeBlock(gMotionModal.format(0), xOutput.format(millx), yOutput.format(milly));
+        writeBlock(gMotionModal.format(0), zOutput.format(cycle.retract));
+        if(cycle.stopSpindle==1){
+          onCommand(COMMAND_STOP_SPINDLE);
+        }else{
+          writeBlock(mFormat.format(3),sOutput.format(cycle.positioningSpindleSpeed));
+        }
+        writeComment(cycle.startingDepth);
+        writeComment(cycle.stock);
+        writeBlock(gMotionModal.format(1), xOutput.format(millx), yOutput.format(milly), zOutput.format(cycle.stock-cycle.startingDepth), feedOutput.format(cycle.positioningFeedrate));
+        writeBlock(mFormat.format(1));
+        if(tool.coolant)writeBlock(mFormat.format(8));
+        writeBlock(mFormat.format(3),sOutput.format(tool.spindleRPM));
+        // broachingTool = true;
+        var broachRev = properties.broachReversal;
+        // writeComment("broach rev: " + broachRev);
+        if(isBroach && broachRev>0){
+          if(isBroach){
+            var broachStart = cycle.stock-cycle.startingDepth;
+            var broachingDist = broachStart-(cycle.bottom);
+            var reversalSteps = 0;
+            var remainderDist = 0;
+            var cwBroaching = true;
+
+            if(broachingDist>broachRev){
+              reversalSteps = Math.floor(broachingDist/broachRev);
+              remainderDist = broachingDist - (broachRev * reversalSteps);
+              writeComment(reversalSteps);
+              for( i=0;i<=reversalSteps;i++){
+                writeBlock(gMotionModal.format(1), xOutput.format(millx), yOutput.format(milly), zOutput.format(broachStart-(i*broachRev)), feedOutput.format(cycle.positioningFeedrate));
+                if(cwBroaching&&i){ //conditional to reverse spindle back and forth
+                  cwBroaching = false;
+                  writeBlock(mFormat.format(4),sOutput.format(tool.spindleRPM));
+                }else if(i){
+                  cwBroaching = true;
+                  writeBlock(mFormat.format(3),sOutput.format(tool.spindleRPM));
+                }
+              }
+              writeBlock(gMotionModal.format(1), xOutput.format(millx), yOutput.format(milly), zOutput.format(cycle.bottom), feedOutput.format(cycle.positioningFeedrate));
+            }else{
+              writeBlock(gMotionModal.format(1), xOutput.format(millx), yOutput.format(milly), zOutput.format(cycle.bottom), feedOutput.format(cycle.positioningFeedrate));
+            }
+            writeBlock(gMotionModal.format(1), xOutput.format(millx), yOutput.format(milly), zOutput.format(cycle.startingDepth+cycle.stock), feedOutput.format(cycle.positioningFeedrate));
+            onCommand(COMMAND_STOP_SPINDLE);
+            writeBlock(gMotionModal.format(1), xOutput.format(millx), yOutput.format(milly), zOutput.format(cycle.retract), feedOutput.format(cycle.positioningFeedrate));
+            
+          }
+        }else{
+              writeBlock(gMotionModal.format(1), xOutput.format(millx), yOutput.format(milly), zOutput.format(cycle.bottom), feedOutput.format(cycle.feedrate));
+              if(cycle.dwell)onDwell(cycle.dwell);
+              writeBlock(gMotionModal.format(1), xOutput.format(millx), yOutput.format(milly), zOutput.format(cycle.retract), feedOutput.format(cycle.retractFeedrate));
+        }
+        break;
     default:
       expandCyclePoint(x, y, z);
     }
