@@ -412,6 +412,10 @@ function onOpen() {
     writeBlock(mFormat.format(31)); // rotary axes encoder reset
     writeBlock(mFormat.format(126)); // shortest path traverse
   }
+  // DPRNT logging - program start
+  writeln("POPEN");
+  writeln("DPRNT[LOG-HURCO VM10I-PROGRAM START-O" + oFormat.format(programId) + "]");
+  writeln("DPRNT[LOG-HURCO VM10I-FILENAME-" + getOutputPath().replace(/\\/g, "/").replace(/\./g, "+") + "]");
 }
 
 function onComment(message) {
@@ -859,6 +863,7 @@ function onSection() {
     }
 
     writeBlock("T" + toolFormat.format(tool.number), mFormat.format(6));
+    writeln("DPRNT[LOG-HURCO VM10I-TOOL CHANGE-T" + toolFormat.format(tool.number) + "]");
 
     if (tool.comment) {
       writeComment(tool.comment);
@@ -2645,6 +2650,8 @@ function onClose() {
     writeBlock(mFormat.format(127)); // cancel shortest path traverse
   }
 
+  writeln("DPRNT[LOG-HURCO VM10I-PROGRAM STOP]");
+  writeln("PCLOS");
   onCommand(COMMAND_STOP_CHIP_TRANSPORT);
   onImpliedCommand(COMMAND_END);
   onImpliedCommand(COMMAND_STOP_SPINDLE);
