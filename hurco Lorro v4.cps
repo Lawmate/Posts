@@ -227,6 +227,20 @@ function onPassThrough(text) {
   }
 }
 
+//function to print out file path, with catch to split across 2 messages if path name is too long
+function writeDprntFilePath(path) {
+  var cleanPath = path.replace(/\\/g, "/").replace(/\./g, "+").replace(/&/g, "and").replace(/_/g, "-");
+  var header = "LOG-HURCO VM10I-FILENAME-";
+  var maxLength = 112 - header.length; // 87 chars for path
+
+  if (cleanPath.length <= maxLength) {
+    writeln("DPRNT[" + header + cleanPath + "]");
+  } else {
+    writeln("DPRNT[" + header + cleanPath.substring(0, maxLength) + "]");
+    writeln("DPRNT[LOG-HURCO VM10I-FILENAME CONT-" + cleanPath.substring(maxLength) + "]");
+  }
+}
+
 function onOpen() {
 
   if (properties.isnc && (highFeedrate <= 0)) {
@@ -415,7 +429,8 @@ function onOpen() {
   // DPRNT logging - program start
   writeln("POPEN");
   writeln("DPRNT[LOG-HURCO VM10I-PROGRAM START-O" + oFormat.format(programId) + "]");
-  writeln("DPRNT[LOG-HURCO VM10I-FILENAME-" + getOutputPath().replace(/\\/g, "/").replace(/\./g, "+") + "]");
+  writeDprntFilePath(getOutputPath());
+  // writeln("DPRNT[LOG-HURCO VM10I-FILENAME-" + getOutputPath().replace(/\\/g, "/").replace(/\./g, "+") + "]");
 }
 
 function onComment(message) {

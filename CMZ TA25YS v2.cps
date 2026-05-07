@@ -158,12 +158,30 @@ properties = {
     scope      : "post"
   },
   maximumSpindleSpeed: {
-    title      : "Max spindle speed",
-    description: "Defines the maximum spindle speed allowed by your machines.",
+    title      : "Max spindle speed main",
+    description: "Defines the maximum spindle speed allowed by your machine on the main spindle.",
+    group      : "configuration",
+    type       : "integer",
+    range      : [0, 999999999],
+    value      : 4000,
+    scope      : "post"
+  },
+  maximumSpindleSpeedSub: {
+    title      : "Max spindle speed sub",
+    description: "Defines the maximum spindle speed allowed by your machine on the sub spindle.",
     group      : "configuration",
     type       : "integer",
     range      : [0, 999999999],
     value      : 4500,
+    scope      : "post"
+  },
+  maximumSpindleSpeedLive: {
+    title      : "Max spindle speed live tool",
+    description: "Defines the maximum spindle speed allowed by your machine on the live tool spindle.",
+    group      : "configuration",
+    type       : "integer",
+    range      : [0, 999999999],
+    value      : 12000,
     scope      : "post"
   },
   showSequenceNumbers: {
@@ -707,6 +725,7 @@ var lastSpindleMode = undefined;
 var lastSpindleSpeed = 0;
 var lastSpindleDirection = undefined;
 var syncStartMethod = SYNC_ERROR; // method used to output spindle block when they are already synched/connected
+var spindlesAreSynced = false;
 var activeTurret = 1;
 var transferOrientation; // spindle orientation during part transfers
 var forceTurningMode = false; // used to force turning mode in onSection after part transfer
@@ -849,7 +868,7 @@ function getCode(code, spindle) {
     return 33;
   case "SPINDLE_SYNCHRONIZATION_OFF":
     machineState.spindlesAreSynchronized = false;
-    return 205;
+    return 36;
   case "CONNECT_C_AXES":
     machineState.cAxesAreSynchronized = true;
     return 136;
@@ -2243,7 +2262,19 @@ function onSection() {
     }
 
     if(!isBarPull){
-      goHome();
+      if(!spindlesAreSynced){
+        goHome();
+      }else{
+        writeBlock(gMotionModal.format(0), 
+        gFormat.format(53), 
+        xOutput.format(getProperty("homePositionX")/2), 
+        yOutput.format(getProperty("homePositionY")), 
+        formatComment("turret safe position"));
+        
+        // writeBlock(gFormat.format(0),
+        // zOutput.format(1),
+        // formatComment("parting blade park position"));
+      }
     }else{
       // writeComment("here");
     }
@@ -2297,7 +2328,10 @@ function onSection() {
     if (getProperty("machineModel") != "PUMA_SMX" || currentTurret == 2) {
       moveSubSpindle(HOME, 0, 0, true, "SUB SPINDLE RETURN", false);
     }
-    goHome();
+    writeComment(spindlesAreSynced);
+    if(!spindlesAreSynced){
+      goHome();
+    }
 
     // Stop the spindle
     if (newSpindle) {
@@ -2571,17 +2605,22 @@ function onSection() {
 
   var forceRPMMode = false;
   var isParting = getParameter("operation:strategy")=="turningPart";
+  var spindleType = getSpindle(TOOL);
   // writeComment(isParting);
   var spindleChanged = tool.type != TOOL_PROBE && (!machineState.stockTransferIsActive || forceSpindle) &&
     (insertToolCall || forceSpindleSpeed || isSpindleSpeedDifferent() || newSpindle); 
   if (spindleChanged || isParting) {
     forceSpindleSpeed = false;
-    if (machineState.isTurningOperation || machineState.axialCenterDrilling) {
+    if ((machineState.isTurningOperation || machineState.axialCenterDrilling) && spindleType == SPINDLE_MAIN) {
       if (spindleSpeed > getProperty("maximumSpindleSpeed")) {
         warning(subst(localize("Spindle speed exceeds maximum value for operation \"%1\"."), getOperationComment()));
       }
-    } else {
-      if (spindleSpeed > 6000) {
+    } else if ((machineState.isTurningOperation || machineState.axialCenterDrilling) && spindleType == SPINDLE_SUB){
+      if (spindleSpeed > getProperty("maximumSpindleSpeedSub")) {
+        warning(subst(localize("Spindle speed exceeds maximum value for operation \"%1\"."), getOperationComment()));
+      }
+    } else if (spindleType == SPINDLE_LIVE){
+      if (spindleSpeed > getProperty("maximumSpindleSpeedLive")) {
         warning(subst(localize("Spindle speed exceeds maximum value for operation \"%1\"."), getOperationComment()));
       }
     }
@@ -2595,7 +2634,21 @@ function onSection() {
     if (!tapping && toolCSS) {
     // writeComment("parting");
       forceRPMMode = (tool.getSpindleMode() == SPINDLE_CONSTANT_SURFACE_SPEED) && !machineState.spindlesAreAttached && !machineState.spindlesAreSynchronized;
+      if(spindlesAreSynced){
+        var barPullPrevious = (getSection(getCurrentSectionId()-1).getStrategy() == "turningSecondarySpindlePull");
+        // writeComment(barPullPrevious);
+        if(!barPullPrevious){
+          var previousClockwiseDirection = getSection(getCurrentSectionId()-1).getTool().clockwise;
+          var thisClockwiseDirection = getSection(getCurrentSectionId()).getTool().clockwise;
+          if(previousClockwiseDirection!=thisClockwiseDirection){
+            writeBlock(sOutput.format(50), formatComment("slow spindle speed down to 50 ready for direction change"));
+            writeBlock(gFormat.format(4), "U15", formatComment("dwell to allow spindle speed to slow"));
+            writeBlock(mFormat.format(334), formatComment("Reverse synchronised spindles"));
+          }
+        }
+      }
       startSpindle(false, false, getFramePosition(currentSection.getInitialPosition()));
+      // }
     }else{
       startSpindle(false,false);
     }
@@ -2743,6 +2796,8 @@ function onSection() {
   } else {
     activeMovements = undefined;
   }
+
+
 
   previousSpindle = tempSpindle;
   activeSpindle = tempSpindle;
@@ -3482,6 +3537,20 @@ function getSecondaryPullMethod(type) {
   return pullMethod;
 }
 
+function getNextNonSpecialSection() {
+  var currentId = getCurrentSectionId();
+  for (var i = currentId + 1; i < getNumberOfSections(); i++) {
+    var s = getSection(i);
+    var strategy = s.getParameter("operation-strategy", "");
+    if (strategy != "turningSecondarySpindleGrab" &&
+        strategy != "turningSecondarySpindleReturn" &&
+        strategy != "turningSecondarySpindlePull") {
+      return s;
+    }
+  }
+  return null;
+}
+
 function onCycle() {
   if ((typeof isSubSpindleCycle == "function") && isSubSpindleCycle(cycleType)) {
     if (!gotSecondarySpindle) {
@@ -3501,10 +3570,16 @@ function onCycle() {
       if (cycleType != "secondary-spindle-return" && cycleType != "secondary-spindle-pull") {
         moveSubSpindle(HOME, 0, 0, true, "SUB SPINDLE RETURN", false);
         goHome();
-        var checkParting = getSection(getCurrentSectionId()+2).getStrategy();
-        if(checkParting == "turningPart"){
-          // writeComment(checkParting);
-          var partingtool = getSection(getCurrentSectionId()+2).getTool();
+        //section to check if there is a parting blade in use later and select it to be out of the way
+        var turningPartSection = null;
+        for (var i = getCurrentSectionId() + 1; i < getNumberOfSections(); i++) {
+          if (getSection(i).getStrategy() == "turningPart") {
+            turningPartSection = getSection(i);
+            break;
+          }
+        }
+        if(turningPartSection){
+          var partingtool = turningPartSection.getTool();
           var partingToolOffsetFactor = getToolOffsetFactor(partingtool);
           var compensationOffset = partingtool.isTurningTool() ? partingtool.compensationOffset : partingtool.lengthOffset;
           var partingToolCode = partingtool.number * partingToolOffsetFactor + compensationOffset;
@@ -3569,10 +3644,19 @@ function onCycle() {
         } else {
           comment = "SPEED SYNCHRONIZATION";
         }
+        //Start the spindle in the correct direction depending on the orientation of the next tool to be used
+        var spinForward;
+        var nextSection = getNextNonSpecialSection();
+        if (nextSection) {
+          spinForward = nextSection.getTool().clockwise ? 3 : 4;
+          // writeComment(spinForward + ", " + nextSection.getTool().getDescription());
+        } else {
+          var spinForward = 3; // default fallback
+        }
         writeBlock(
           gSpindleModeModal.format(spindleMode),
           sOutput.format(_spindleSpeed),
-          mFormat.format(3),
+          mFormat.format(spinForward),
           spOutput.format(getCode("SELECT_SPINDLE", getSpindle(PART))),
           formatComment("spin up spindle")
         );
@@ -3580,6 +3664,7 @@ function onCycle() {
           mFormat.format(transferCodes.direction),
           formatComment(comment)
         );
+        spindlesAreSynced = true;
         lastSpindleMode = transferCodes.spindleMode;
         lastSpindleSpeed = _spindleSpeed;
         lastSpindleDirection = transferCodes.spindleDirection;
@@ -3668,6 +3753,7 @@ function onCycle() {
         }
         moveSubSpindle(HOME, 0, 0, true, "SUB SPINDLE RETURN", true);
         writeBlock(mFormat.format(36), formatComment("stop synchronisation of sp1 and sp2"));
+        spindlesAreSynced = false;
       } else {
         clampChuck(getSpindle(PART), CLAMP);
         onDwell(cycle.dwell);
@@ -4503,8 +4589,9 @@ function startSpindle(tappingMode, forceRPMMode, initialPosition) {
     if (machineState.isTurningOperation) {
       if (syncStartMethod == SYNC_ERROR) {
         if (isSpindleSpeedDifferent()) {
-          error(localize("A spindle start block cannot be output while the spindles are synchronized."));
-          return;
+          // error(localize("A spindle start block cannot be output while the spindles are synchronized."));
+          // return;
+          writeComment("syncerror");
         } else {
           return;
         }
@@ -4551,6 +4638,7 @@ function startSpindle(tappingMode, forceRPMMode, initialPosition) {
     spindleDir,
     spOutput.format(getCode("SELECT_SPINDLE", getSpindle(TOOL)))
   );
+  // writeComment("here");
   // wait for spindle here if required
 
   // clamp secondary chuck if necessary
@@ -4824,7 +4912,7 @@ function getSpindleTransferCodes(_transferType) {
     } else if (section.getType() == TYPE_TURNING) {
       var tool = section.getTool();
       if (!tool.clockwise) {
-        transferCodes.direction += 1;
+        // transferCodes.direction += 1;
       }
       transferCodes.spindleMode = tool.getSpindleMode();
       transferCodes.surfaceSpeed = tool.surfaceSpeed;
