@@ -20,6 +20,12 @@
 //     transferUseTorque:yes,no   - Use torque control for stock-transfer
 //     usePolarInterpolation      - Force Polar interpolation mode for next operation (usePolarMode is deprecated but still supported)
 //     usePolarCoordinates        - Force Polar coordinates for the next operation (useXZCMode is deprecated but still supported)
+//
+// The following OPERATION NOTE keywords are supported (write in the operation Notes field in Fusion 360):
+//
+//     polar                      - Force polar interpolation (G12.1) for this operation only (works for milling and drilling cycles)
+//     osc                        - Enable oscillation cutting for this operation only
+//     noosc                      - Disable oscillation cutting for this operation (overrides global oscCut setting)
 //     useTailStock:yes,no        - Use tailstock until canceled
 //     syncSpindleStart:error, unclamp, speed   - Method to use when starting the spindle while they are connected/synched
 //
@@ -94,12 +100,12 @@ properties = {
     description: "Insert top cut and remnant eject block delete sections for use with bar loader. All blocks are with /2 and /3 block delete prefixes",
     group      : "configuration",
     type       : "boolean",
-    value      : true,
+    value      : false,
     scope      : "post"
   },
   xAxisMinimum: {
     title      : "X-axis minimum limit",
-    description: "Defines the lower limit of X-axis travel as a radius value.",
+    description: "Defines the lower limit of X-axis travel as a radius value. To force polar interpolation for a specific operation only (regardless of this limit), write 'polar' in the operation notes field.",
     group      : "configuration",
     type       : "spatial",
     range      : [-99999, 0],
@@ -1193,7 +1199,7 @@ function onOpen() {
   // define machine
   defineMachine();
   turret1GotBAxis = gotBAxis;
-  activeTurret = activateMachine(getSection(0));
+  activeTurret = activateMachine(getSection(0)); 
 
   if (highFeedrate <= 0) {
     error(localize("You must set 'highFeedrate' because axes are not synchronized for rapid traversal."));
@@ -2143,6 +2149,10 @@ function onSection() {
       }else if(theNote == "noosc"||theNote == ""){
         oscCutting = false;
       }
+      if(theNote == "polar"){
+        forcePolarInterpolation = true;
+        forcePolarCoordinates = false;
+      }
       // writeComment(oscCutting);
     
   // }
@@ -2566,7 +2576,8 @@ function onSection() {
 
   // Turn on coolant
   setCoolant(tool.coolant);
-
+  writeComment("use parts catcher");
+  writeComment("partCutoff "+partCutoff+", currentSection.partCatcher "+currentSection.partCatcher+", isLastSection() "+isLastSection());
   // Activate part catcher for part cutoff section
   if (getProperty("usePartCatcher") && partCutoff && currentSection.partCatcher && isLastSection()) {
     engagePartCatcher(true);
@@ -2892,7 +2903,9 @@ function updateMachiningMode(section) {
         // drilling axial
         machineState.axialCenterDrilling = isAxialCenterDrilling(section, true);
         if (!machineState.axialCenterDrilling && !isAxialCenterDrilling(section, false)) { // several holes not on XY center
-          if (operationPolarMode != undefined) {
+          if (forcePolarInterpolation) {
+            machineState.usePolarInterpolation = true;
+          } else if (operationPolarMode != undefined) {
             if (operationPolarMode == IN_CONTROL) {
               warning(subst(localize("Polar mode \"In Control\" is not supported for drilling operation \"%1\". The post processor will use mode \"Automatic\" instead."), getOperationComment()));
             } else if (operationPolarMode == IN_COMPUTER) {
@@ -3766,7 +3779,36 @@ function onCycle() {
     }
   }
 
-  if (cycleType == "stock-transfer") {
+  if (cycleType == "tool-call") {
+    writeln("");
+    if (hasParameter("operation-comment")) {
+      var comment = getParameter("operation-comment");
+      if (comment) {
+        writeComment(comment);
+      }
+    }
+
+    onCommand(COMMAND_COOLANT_OFF);
+    goHome();
+    onCommand(COMMAND_STOP_SPINDLE);
+
+    if (tool.number == 0) {
+      error(localize("Tool number cannot be 0"));
+      return;
+    }
+    if (tool.number > getProperty("maxTool")) {
+      warning(localize("Tool number exceeds maximum value."));
+    }
+
+    var toolCallOffsetFactor = getToolOffsetFactor(tool);
+    toolFormat.setMinDigitsLeft(toolCallOffsetFactor == 1000 ? 5 : 4);
+    var toolCallCompensationOffset = tool.isTurningTool() ? tool.compensationOffset : tool.lengthOffset;
+    writeBlock("T" + toolFormat.format(tool.number * toolCallOffsetFactor + toolCallCompensationOffset));
+    if (tool.comment) {
+      writeComment(tool.comment);
+    }
+    return;
+  } else if (cycleType == "stock-transfer") {
     warning(localize("Stock transfer is not supported. Required machine specific customization."));
     return;
   } else if (!getProperty("useCycles") && tapping) {
@@ -4702,7 +4744,6 @@ function moveSubSpindle(_method, _position, _feed, _useMachineFrame, _comment, _
     writeBlock(
       gFormat.format(getProperty("useG53ForXfer")==="g53"?53:54),
       gMotionModal.format(0),
-      _useMachineFrame ? gFormat.format(53) : "",
       subOutput.format(_position),
       conditional(_comment, formatComment(_comment))
     );
@@ -4713,12 +4754,10 @@ function moveSubSpindle(_method, _position, _feed, _useMachineFrame, _comment, _
       switch (getProperty("useG53ForXfer")) {
       case "g53":
         gMotionModal.reset();
-        // writeComment("there");
-        writeBlock(gFormat.format(53), subOutput.format(_position));
+        writeBlock(gFormat.format(53), gMotionModal.format(1), subOutput.format(_position), getFeed(_feed), conditional(_comment, formatComment(_comment)));
         break;
       case "g54":
-        // writeComment("hi");
-        writeBlock(gFormat.format(54), subOutput.format(_position));
+        writeBlock(gFormat.format(54), gMotionModal.format(1), subOutput.format(_position), getFeed(_feed), conditional(_comment, formatComment(_comment)));
         break;
       case "g532":
         writeBlock(gMotionModal.format(1), gFormat.format(53.2), subOutput.format(_position), getFeed(_feed), conditional(_comment, formatComment(_comment)));
@@ -4943,6 +4982,7 @@ function ejectPart() {
   } else {
     writeComment(localize("PART EJECT"));
   }
+  writeBlock(mFormat.format(getCode("AIR_BLAST_ON", SPINDLE_SUB)), formatComment("spindle 2 air blast on"));
   gMotionModal.reset();
   moveSubSpindle(HOME, 0, 0, true, "SUB SPINDLE RETURN", true);
   // goHome(); // Position all axes to home position
@@ -4985,13 +5025,16 @@ function ejectPart() {
   writeBlock(gFormat.format(53), gMotionModal.format(0), subOutput.format(getProperty("homePositionB")), formatComment("turret safe position b"));
   writeBlock(gFormat.format(53), gMotionModal.format(0), yOutput.format(getProperty("homePositionY")), formatComment("turret safe position y"));
   writeBlock(gFormat.format(53), gMotionModal.format(0), xOutput.format(0.5*getProperty("homePositionX")), formatComment("turret safe position x"));
-  writeBlock(gFormat.format(53), gMotionModal.format(0), zOutput.format(-Number(getProperty("homePositionZ"))), formatComment("turret safe position z"));
+  zOutput.reset();
+  writeBlock(gMotionModal.format(0), gFormat.format(53), "Z"+getProperty("homePositionZ"), formatComment("turret safe position z"));
+  // writeBlock(gFormat.format(53), gMotionModal.format(0), zOutput.format(-Number(getProperty("homePositionZ"))), formatComment("turret safe position z"));
   if(ejectPark){
     // writeComment(partTool);
     writeBlock("T"+partTool, formatComment("position parting tool"));
     zOutput.reset();
     writeBlock(gFormat.format(54), gFormat.format(0), "Z10.", formatComment("parting blade park position"));
   }
+  // writeBlock(mFormat.format(9), mFormat.format(479), formatComment("sub spindle coolant off"));
 
 
 
@@ -5026,6 +5069,7 @@ function ejectPart() {
   onDwell(1.0);
   writeBlock(mFormat.format(244),formatComment("Part ejector retract"));
   writeBlock(mFormat.format(9),mFormat.format(479),formatComment("sub spindle coolant flush off"));
+  writeBlock(mFormat.format(getCode("AIR_BLAST_OFF", SPINDLE_SUB)), formatComment("spindle 2 air blast off"));
   
   moveSubSpindle(HOME, 0, 0, true, "SUB SPINDLE RETURN", true);
 
@@ -5143,7 +5187,7 @@ function onSectionEnd() {
   if (getProperty("usePartCatcher") && partCutoff && currentSection.partCatcher && isLastSection()) {
     engagePartCatcher(false);
   }
-  if (getProperty("cutoffConfirmation") != "false" && partCutoff && hasSubSpindle()) {
+  if (getProperty("cutoffConfirmation") != "false" && partCutoff && hasSubSpindle() && spindlesAreSynced ) {
     var cutoffCon = getProperty("cutoffConfirmation");
     switch (cutoffCon.charAt(0).toLowerCase()) {
     case "m":
@@ -5221,7 +5265,7 @@ function onClose() {
   }
   
   //if using part catcher when not using the subspindle, send signal to bar feeder for bar pushing
-  if(!ejectRoutine&&getProperty("usePartCatcher")){
+  if(!ejectRoutine&&getProperty("usePartCatcher")&&getProperty("barLoader")){
     if(hasPartOff() && !hasSubSpindle()){
       // onCommand(MAIN_)
       clampChuck(getSpindle(PART), UNCLAMP);
