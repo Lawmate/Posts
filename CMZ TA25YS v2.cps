@@ -4705,7 +4705,15 @@ function stopSpindle() {
     writeBlock(
       mFormat.format(getCode("SPINDLE_SYNCHRONIZATION_OFF", activeSpindle)),
       spOutput.format(getCode("SELECT_SPINDLE", activeSpindle))
-    , formatComment("spindle off"));
+    , formatComment("spindle unsynced"));
+    writeBlock(
+      mFormat.format(getCode("STOP_SPINDLE", SPINDLE_MAIN)),
+      spOutput.format(getCode("SELECT_SPINDLE", activeSpindle))
+    , formatComment("spindle off main"));
+    writeBlock(
+      mFormat.format(getCode("STOP_SPINDLE", SPINDLE_SUB)),
+      spOutput.format(getCode("SELECT_SPINDLE", activeSpindle))
+    , formatComment("spindle off sub"));
     sOutput.reset();
   } else {
     writeBlock(
