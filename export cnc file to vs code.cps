@@ -1,11 +1,11 @@
 /**
-  Copyright (C) 2012-2024 by Autodesk, Inc.
+  Copyright (C) 2012-2026 by Autodesk, Inc.
   All rights reserved.
 
   Autodesk intermediate post processor configuration.
 
-  $Revision: 44110 51bffa3d7e58870b3886dc8a144e7bb21c0e7878 $
-  $Date: 2024-02-05 07:58:54 $
+  $Revision: 44220 f766213dd8199b70969a555c75d1029f83efc3cb $
+  $Date: 2026-04-02 10:51:02 $
 
   FORKID {D38E0AF6-F1A7-4C6D-A0FA-C99BB29E65AE}
 */
@@ -13,7 +13,7 @@
 description = "Export CNC file to Visual Studio Code";
 vendor = "Autodesk";
 vendorUrl = "http://www.autodesk.com";
-legal = "Copyright (C) 2012-2024 by Autodesk, Inc.";
+legal = "Copyright (C) 2012-2026 by Autodesk, Inc.";
 certificationLevel = 2;
 minimumRevision = 41666;
 
@@ -29,7 +29,7 @@ properties = {
     type       : "boolean",
     value      : false,
     scope      : "post",
-    visible    : "false"
+    visible    : false
   },
   cncFolder: {
     title      : "CNC output folder",
@@ -150,9 +150,15 @@ function onClose() {
   }
 }
 
-//Dummy function for additive toopath
 function onLinearExtrude() {
 }
 
 function onCircularExtrude() {
+}
+
+function onConnectionStart() {
+  skipRemainingSection();
+}
+
+function onConnectionEnd() {
 }

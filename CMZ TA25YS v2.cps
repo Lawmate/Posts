@@ -261,16 +261,33 @@ properties = {
   },
   autoEject: {
     title      : "Auto eject",
-    description: "Specifies whether the part should automatically eject at the end of a program.  'Use coolant flush' will use flush coolant to eject the part instead of the part ejector.",
+    description: "Specifies when the part should automatically eject using coolant flush.  'Post cycle' ejects once at the end of the program.  'Pre transfer' ejects the part currently held in the sub spindle right before the next sub spindle grab.",
     group      : "preferences",
     type       : "enum",
     values     : [
-      {title:"Yes", id:"true"},
-      {title:"No", id:"false"},
-      {title:"Use coolant flush", id:"flush"}
+      {title:"Off", id:"off"},
+      {title:"Post cycle", id:"postCycle"},
+      {title:"Pre transfer", id:"preTransfer"}
     ],
-    value: "false",
+    value: "preTransfer",
     scope: "post"
+  },
+  ejectBPosition: {
+    title      : "Eject B position",
+    description: "G53 B position the sub spindle moves to when ejecting the part. This will vary with part length.",
+    group      : "preferences",
+    type       : "number",
+    range      : [-1000, 0],
+    value      : -295,
+    scope      : "post"
+  },
+  partingBladeNumber: {
+    title      : "Parting blade number",
+    description: "Tool number (including offset) indexed as a known-safe tool ahead of every sub spindle grab or part eject, so the previous turret tool cannot collide with the sub spindle. Used only when the program has no parting operation to find the tool from automatically.",
+    group      : "preferences",
+    type       : "integer",
+    value      : 1010,
+    scope      : "post"
   },
   oscCut: {
     title      : "Oscillation cutting",
@@ -575,8 +592,8 @@ var singleLineCoolant = false; // specifies to output multiple coolant codes in 
 var coolants = [
   {id:COOLANT_FLOOD, on:8, off:9},
 //   {id:COOLANT_HIPRESSURE, on:18, off:19},
-  {id:COOLANT_MIST, on:138, off:139},
-  {id:COOLANT_THROUGH_TOOL, spindle1:{on:108, off:109}, spindle2:{on:126, off:127}, spindleLive:{on:308, off:309}},
+  {id:COOLANT_MIST, on:18, off:19},
+  {id:COOLANT_THROUGH_TOOL, spindle1:{on:478, off:479}, spindle2:{on:478, off:479}, spindleLive:{on:308, off:309}},
   {id:COOLANT_AIR, spindle1:{on:14, off:15}, spindle2:{on:114, off:115}},
   {id:COOLANT_AIR_THROUGH_TOOL},
   {id:COOLANT_SUCTION, on:7, off:9},
@@ -1435,7 +1452,7 @@ if (getProperty("barLoader")==true){
   }
 
   // automatically eject part at end of program
-  if (getProperty("autoEject") != "false") {
+  if (getProperty("autoEject") == "postCycle") {
     ejectRoutine = true;
   }
 
@@ -2136,9 +2153,7 @@ var oscKVal = 0;
 function onSection() {
 
   // if(isFirstSection()){
-    var theNote = "";
-    theNote = hasParameter("job-notes") ? getParameter("job-notes") : "";
-    theNote = hasParameter("notes") ? getParameter("notes") : "";
+    var theNote = hasParameter("notes") ? getParameter("notes") : "";
     // var noNote = (!hasParameter("job-notes")&&!hasParameter("notes"));
     // writeComment(noNote);
     // writeComment(theNote);
@@ -2146,7 +2161,7 @@ function onSection() {
     // writeComment("note: " + hasParameter("notes")+(hasParameter("notes") ? (", "+getParameter("notes")) : ""));
       if(theNote == "osc"){
         oscCutting = true;
-      }else if(theNote == "noosc"||theNote == ""){
+      }else{
         oscCutting = false;
       }
       if(theNote == "polar"){
@@ -3623,6 +3638,16 @@ function onCycle() {
 
     switch (cycleType) {
     case "secondary-spindle-grab":
+      // Eject the part left in the sub spindle from the previous loop of the program before grabbing the next one,
+      // or just index a safe tool clear of the sub spindle. The control loops this program via M30, so there is no
+      // way to know at post-processing time whether a part is actually present - ejecting an empty sub spindle is harmless.
+      if (getProperty("autoEject") == "preTransfer") {
+        // The real grab/clamp hasn't run yet this pass, so assert the sub chuck state ejectPart() relies on
+        machineState.subChuckIsClamped = true;
+        ejectPart();
+      } else {
+        indexPartingToolAndRetract();
+      }
       // Activate part catcher for part cutoff section
       if (getProperty("usePartCatcher") && partCutoff && currentSection.partCatcher) {
         engagePartCatcher(true);
@@ -4975,6 +5000,36 @@ function getG17Code() {
   return (machineState.usePolarInterpolation || !gotYAxis) ? 18 : 17;
 }
 
+// Find the tool used by the parting (turningPart) operation, if the program has one
+function getPartingToolCode() {
+  var numberOfSections = getNumberOfSections();
+  for (var i = 0; i < numberOfSections; i++) {
+    var section = getSection(i);
+    if (section.getStrategy() == "turningPart") {
+      var partingTool = section.getTool();
+      var offsetFactor = getToolOffsetFactor(partingTool);
+      var compensationOffset = partingTool.isTurningTool() ? partingTool.compensationOffset : partingTool.lengthOffset;
+      return partingTool.number * offsetFactor + compensationOffset;
+    }
+  }
+  return getProperty("partingBladeNumber");
+}
+
+// Index a known-safe tool (the parting blade) before the sub spindle grabs or ejects a part,
+// so the previously active turret tool cannot stick out and collide with the sub spindle
+function indexPartingTool() {
+  writeBlock("T" + toolFormat.format(getPartingToolCode()), formatComment("index safe tool clear of sub spindle"));
+}
+
+// Index the safe tool and retract to G54 Z0. Only for use when nothing else retracts Z afterward
+// (ejectPart() already retracts to the G53 home Z position further down, so it uses indexPartingTool() alone).
+function indexPartingToolAndRetract() {
+  indexPartingTool();
+  gMotionModal.reset();
+  zOutput.reset();
+  writeBlock(gFormat.format(54), gMotionModal.format(0), zOutput.format(0), formatComment("retract to G54 Z0"));
+}
+
 function ejectPart() {
   if (machineState.spindlesAreAttached) {
     error(localize("Cannot eject part when spindles are connected."));
@@ -5036,6 +5091,7 @@ function ejectPart() {
   zOutput.reset();
   writeBlock(gMotionModal.format(0), gFormat.format(53), "Z"+getProperty("homePositionZ"), formatComment("turret safe position z"));
   // writeBlock(gFormat.format(53), gMotionModal.format(0), zOutput.format(-Number(getProperty("homePositionZ"))), formatComment("turret safe position z"));
+  indexPartingToolAndRetract();
   if(ejectPark){
     // writeComment(partTool);
     writeBlock("T"+partTool, formatComment("position parting tool"));
@@ -5055,12 +5111,9 @@ function ejectPart() {
     // gPlaneModal.format(getG17Code()),
     // cAxisEngageModal.format(getCode("DISABLE_C_AXIS", spindle))
   // );
-  if (getProperty("autoEject") == "flush") { 
-    setCoolant(COOLANT_THROUGH_TOOL);
-  }
   gSpindleModeModal.reset();
   writeBlock(mFormat.format(getCode("STOP_SPINDLE", spindle)),formatComment("stop spindle"));
-  writeBlock(gFormat.format(53), gMotionModal.format(0), subOutput.format(getProperty("partCatcherPosition")), formatComment("B axis into position"));
+  writeBlock(gFormat.format(53), gMotionModal.format(0), subOutput.format(getProperty("ejectBPosition")), formatComment("B axis into position"));
   writeBlock(mFormat.format(280),formatComment("engage c axis"));
   writeBlock(gFormat.format(53), cOutput.format(240*(-Math.PI/180)), feedOutput.format(1000), formatComment("c axis into position"));
   writeBlock(mFormat.format(281),formatComment("disengage c axis"));
@@ -5069,10 +5122,9 @@ function ejectPart() {
     engagePartCatcher(true);
   }
   // onDwell(1.5);
-  if (getProperty("autoEject") != "flush") {
-    writeBlock(mFormat.format(243),formatComment("Part ejector extend"));
-  }
+  writeBlock(mFormat.format(243),formatComment("Part ejector extend"));
   clampChuck(spindle, UNCLAMP);
+  // setCoolant(COOLANT_THROUGH_TOOL);
   writeBlock(mFormat.format(8),mFormat.format(478),formatComment("sub spindle coolant flush on"));
   onDwell(1.0);
   writeBlock(mFormat.format(244),formatComment("Part ejector retract"));
@@ -5088,11 +5140,9 @@ function ejectPart() {
   //   writeBlock(mFormat.format(getCode("AIR_BLAST_OFF", spindle)));
   // }
   // writeBlock(mFormat.format(getCode("STOP_SPINDLE", spindle)), spOutput.format(getCode("SELECT_SPINDLE", spindle)));
-  if (getProperty("autoEject") == "flush") {
-    setCoolant(COOLANT_OFF);
-  }
+  // setCoolant(COOLANT_OFF);
   if (getProperty("usePartCatcher")) {
-    onDwell(2); // allow coolant to drain
+    // onDwell(2); // allow coolant to drain
     engagePartCatcher(false);
     // onDwell(1.1);
   }
@@ -5111,7 +5161,7 @@ function engagePartCatcher(engage) {
           (getSpindle(PART) == SPINDLE_MAIN) &&
           !machineState.spindlesAreAttached &&
           !machineState.tailstockIsActive) {
-        moveSubSpindle(RAPID, getProperty("partCatcherPosition"), 0, true, "POSITION PART CATCHER", true);
+        // moveSubSpindle(RAPID, getProperty("partCatcherPosition"), 0, true, "POSITION PART CATCHER", true);
       }
     } else { // disengage part catcher
       onCommand(COMMAND_COOLANT_OFF);
@@ -5120,7 +5170,7 @@ function engagePartCatcher(engage) {
           (getSpindle(PART) == SPINDLE_MAIN) &&
           !machineState.spindlesAreAttached &&
           !machineState.tailstockIsActive) {
-        moveSubSpindle(HOME, 0, 0, true, "RETRACT PART CATCHER", true);
+        moveSubSpindle(HOME, 0, 0, true, "sub spindle return", true);
       }
       writeBlock(mFormat.format(getCode("PART_CATCHER_OFF", true)), formatComment(localize("PART CATCHER down to conveyor")));
     }
