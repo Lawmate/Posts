@@ -4245,20 +4245,10 @@ function onCyclePoint(x, y, z) {
       );
       break;
     case "chip-breaking":
-      if (cycle.accumulatedDepth < cycle.depth) {
-        expandCyclePoint(x, y, z);
-      } else {
-        writeCycleClearance(plane, cycle.clearance);
-        localZOutput.reset();
-        writeBlock(
-          gCycleModal.format(plane == 19 ? 87 : 83),
-          getCommonCycle(x, y, z, rapto, true),
-          cycle.incrementalDepth > 0 ? peckOutput.format(cycle.incrementalDepth) : "",
-          P > 0 ? pOutput.format(P) : "",
-          getFeed(cycle.feedrate),
-          lockCode
-        );
-      }
+      // G83/G87 always retract fully to the clearance plane every peck - there is no small-retract chip-breaking
+      // canned cycle on this control, so chip-breaking must always be expanded into individual moves. That is the
+      // only way accumulated depth (full retract every N pecks, or never) is honoured instead of always retracting.
+      expandCyclePoint(x, y, z);
       break;
     case "deep-drilling":
       writeCycleClearance(plane, cycle.clearance);
