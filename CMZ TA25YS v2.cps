@@ -592,7 +592,7 @@ var singleLineCoolant = false; // specifies to output multiple coolant codes in 
 var coolants = [
   {id:COOLANT_FLOOD, on:8, off:9},
 //   {id:COOLANT_HIPRESSURE, on:18, off:19},
-  {id:COOLANT_MIST, on:18, off:19},
+  {id:COOLANT_MIST, on:18, off:17},
   {id:COOLANT_THROUGH_TOOL, spindle1:{on:478, off:479}, spindle2:{on:478, off:479}, spindleLive:{on:308, off:309}},
   {id:COOLANT_AIR, spindle1:{on:14, off:15}, spindle2:{on:114, off:115}},
   {id:COOLANT_AIR_THROUGH_TOOL},
