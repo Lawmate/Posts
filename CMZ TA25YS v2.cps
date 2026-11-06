@@ -4990,17 +4990,36 @@ function getG17Code() {
   return (machineState.usePolarInterpolation || !gotYAxis) ? 18 : 17;
 }
 
-// Find the tool used by the parting (turningPart) operation, if the program has one
+// Find the tool used by the parting (turningPart) operation, if the program has one.
+// Prefer the next parting operation after the current section (the real cutoff that follows the grab),
+// so an earlier pilot groove programmed as a parting operation with a grooving tool is not picked.
+// Fall back to the most recent parting operation before the current section (e.g. eject at end of program).
 function getPartingToolCode() {
   var numberOfSections = getNumberOfSections();
-  for (var i = 0; i < numberOfSections; i++) {
-    var section = getSection(i);
-    if (section.getStrategy() == "turningPart") {
-      var partingTool = section.getTool();
-      var offsetFactor = getToolOffsetFactor(partingTool);
-      var compensationOffset = partingTool.isTurningTool() ? partingTool.compensationOffset : partingTool.lengthOffset;
-      return partingTool.number * offsetFactor + compensationOffset;
+  var currentId = getCurrentSectionId();
+  if (currentId < 0) {
+    currentId = numberOfSections - 1;
+  }
+  var partingSection = null;
+  for (var i = currentId + 1; i < numberOfSections; i++) {
+    if (getSection(i).getStrategy() == "turningPart") {
+      partingSection = getSection(i);
+      break;
     }
+  }
+  if (!partingSection) {
+    for (var i = Math.min(currentId, numberOfSections - 1); i >= 0; i--) {
+      if (getSection(i).getStrategy() == "turningPart") {
+        partingSection = getSection(i);
+        break;
+      }
+    }
+  }
+  if (partingSection) {
+    var partingTool = partingSection.getTool();
+    var offsetFactor = getToolOffsetFactor(partingTool);
+    var compensationOffset = partingTool.isTurningTool() ? partingTool.compensationOffset : partingTool.lengthOffset;
+    return partingTool.number * offsetFactor + compensationOffset;
   }
   return getProperty("partingBladeNumber");
 }
@@ -5070,7 +5089,7 @@ function ejectPart() {
     return (defaultValue !== undefined) ? defaultValue : 0;
   }
   var ejectPark = getPullingDistance(0); // Returns 50 if not found
-  var partTool = partingTool(0); // Returns 50 if not found
+  var partTool = toolFormat.format(getPartingToolCode());
   subOutput.reset();
   yOutput.reset();
   xOutput.reset();

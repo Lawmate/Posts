@@ -229,7 +229,7 @@ function onPassThrough(text) {
 
 //function to print out file path, with catch to split across 2 messages if path name is too long
 function writeDprntFilePath(path) {
-  var cleanPath = path.replace(/\\/g, "/").replace(/\./g, "+").replace(/&/g, "and").replace(/_/g, "-");
+  var cleanPath = path.replace(/\\/g, "/").replace(/\./g, "+").replace(/&/g, "and").replace(/’/g, "'");
   var header = "LOG-HURCO VM10I-FILENAME-";
   var maxLength = 112 - header.length; // 87 chars for path
 
