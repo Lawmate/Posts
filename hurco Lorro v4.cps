@@ -23,7 +23,7 @@ extension = "hnc";
 programNameIsInteger = true;
 setCodePage("ascii");
 
-capabilities = CAPABILITY_MILLING;
+capabilities = CAPABILITY_MILLING | CAPABILITY_MACHINE_SIMULATION;
 tolerance = spatial(0.002, MM);
 
 minimumChordLength = spatial(0.025, MM);
@@ -1054,7 +1054,7 @@ function onSection() {
   
     if (insertToolCall || retracted) {
       var lengthOffset = tool.lengthOffset;
-      if (lengthOffset > 200) {
+      if (lengthOffset > 9999) {
         warning(localize("The length offset exceeds the maximum value."));
       }
 
