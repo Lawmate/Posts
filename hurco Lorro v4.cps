@@ -66,11 +66,436 @@ properties = {
     ],
     value: "G53",
     scope: "post"
-  },
-  // edge feed (constant feed at the cutting edge) - IN DEVELOPMENT, these properties have no effect yet
-  edgeFeedEnable: {title:"Edge feed: enable (in development)", description:"Adjust the centre-line feed so the cutting edge in contact with the wall moves at the programmed feed. Set per operation in the Post Process tab.", group:"preferences", type:"boolean", value:false, scope:["post", "operation"]},
-  edgeFeedMaxFactor: {title:"Edge feed: max speed-up factor (in development)", description:"Maximum multiplier applied to the programmed feed on outside arcs. The post value is the default, and an operation can override it.", group:"preferences", type:"number", range:[1, 5], value:2, scope:["post", "operation"]}
+  }
 };
+
+// >>>>> INCLUDED FROM edgeFeed.cpi
+/**
+  Edge feed module for Autodesk Fusion post processors.
+
+  Fusion programs a constant feed at the tool centre. On a curve, the cutting edge touching the
+  wall travels on a different radius, so the feed at the edge is higher than programmed in inside
+  corners and lower around outside profiles. This module rescales the centre-line feed so that
+  the edge in contact with the wall moves at the programmed feed.
+
+  - Arcs (onCircular) are corrected from the arc radius.
+  - Linear moves are buffered by one move so that the curvature at each segment can be fitted
+    from the neighbouring points. Only chains of segments that are consistent with a curve
+    linearised at the operation tolerance are corrected; true straight lines are never changed.
+
+  Curvature is measured in the XY plane, so the module is intended for 3-axis machines with the
+  tool along Z. 3D toolpaths are allowed but experimental.
+
+  Porting into a post (see README.md for details):
+    1. Paste this file (or use tools/inline.sh) anywhere at top level in the post.
+    2. Merge the properties:   edgeFeedMergeProperties(properties);   (top level, after 'properties')
+    3. onOpen():               edgeFeed.init({writeLinear:writeLinear, writeComment:writeComment});
+    4. onSection():            edgeFeed.onSection(currentSection, tool);
+    5. onLinear():             if (pendingRadiusCompensation < 0 && edgeFeed.onLinear(_x, _y, _z, feed)) {return;}
+                               edgeFeed.flush();  // then the post's normal linear output, moved into writeLinear()
+    6. onCircular():           feed = edgeFeed.circularFeed(clockwise, cx, cy, cz, x, y, z, feed);
+    7. Every other entry point that writes output (onRapid, onRapid5D, onLinear5D, onCycle, onCyclePoint,
+       onCommand, onDwell, onPassThrough, onRadiusCompensation, onSectionEnd, ...): edgeFeed.flush();
+    8. onSectionEnd():         edgeFeed.onSectionEnd();
+*/
+
+var EDGE_FEED_VERSION = "0.1.0";
+
+var edgeFeedProperties = {
+  edgeFeedEnable: {
+    title      : "Edge feed: enable",
+    description: "Adjust the centre-line feed so the cutting edge in contact with the wall moves at the programmed feed. Can be set per operation in the Post Process tab.",
+    group      : "preferences",
+    type       : "boolean",
+    value      : false,
+    scope      : ["post", "operation"]
+  },
+  edgeFeedMaxFactor: {
+    title      : "Edge feed: max speed-up factor",
+    description: "Maximum multiplier applied to the programmed feed on outside curves. The post value is the default, and an operation can override it.",
+    group      : "preferences",
+    type       : "number",
+    value      : 2,
+    scope      : ["post", "operation"]
+  },
+  edgeFeedMinFactor: {
+    title      : "Edge feed: min slow-down factor",
+    description: "Minimum multiplier applied to the programmed feed in inside corners.",
+    group      : "preferences",
+    type       : "number",
+    value      : 0.1,
+    scope      : "post"
+  },
+  edgeFeedMaxFeed: {
+    title      : "Edge feed: max cutting feed",
+    description: "The adjusted feed is never raised above this value (0 = no limit). Programmed feeds above it are left as they are.",
+    group      : "preferences",
+    type       : "number",
+    value      : 0,
+    scope      : "post"
+  },
+  edgeFeedSagittaMargin: {
+    title      : "Edge feed: tolerance margin",
+    description: "Linear segments are treated as part of a curve when their deviation from the fitted circle is within the operation tolerance times (1 + margin).",
+    group      : "preferences",
+    type       : "number",
+    value      : 0.5,
+    scope      : "post"
+  },
+  edgeFeedDebug: {
+    title      : "Edge feed: debug comments",
+    description: "Write a comment with the fitted radius and feed factor before each adjusted move.",
+    group      : "preferences",
+    type       : "boolean",
+    value      : false,
+    scope      : "post"
+  }
+};
+
+/** Adds the edge feed properties to the post's properties object. */
+function edgeFeedMergeProperties(target) {
+  for (var name in edgeFeedProperties) {
+    if (target[name] === undefined) {
+      target[name] = edgeFeedProperties[name];
+    }
+  }
+}
+
+var edgeFeed = {
+  // fixed settings, can be changed by the host post
+  settings: {
+    minTurnAngle  : 0.05 * Math.PI / 180, // turns below this angle are straight lines
+    radiusRatio   : 1.25, // the two fitted circles around a segment must agree within this ratio
+    minXYFraction : 0.5, // segments with less XY travel than this fraction of their length are not adjusted
+    epsilon       : 1e-6,
+    movements     : undefined // movement types that are adjusted, set in init()
+  },
+
+  host : undefined, // {writeLinear:function(x, y, z, feed), writeComment:function(text)}
+  state: undefined, // per section configuration and statistics
+  buffer: undefined, // linear move look-ahead
+
+  /* ---------------------------------------------------------------------------------------------
+     Pure geometry, no dependency on the post kernel (unit tested in test/)
+  --------------------------------------------------------------------------------------------- */
+
+  /**
+    Returns the centre-line feed multiplier for a curve.
+    @param postedRadius   radius of the posted path (the tool centre, or the part profile if compensation is in the control)
+    @param toolRadius     tool radius
+    @param turn           +1 curve turns left (CCW), -1 turns right (CW)
+    @param side           +1 wall on the left of the direction of travel, -1 on the right
+    @param profilePosted  true when the posted path is the part profile (compensation in the control)
+    @return {factor, centreRadius, wallRadius}, factor is unclamped (Infinity when the wall radius is ~0)
+  */
+  curveFactor: function (postedRadius, toolRadius, turn, side, profilePosted) {
+    var wallInside = (turn == side); // the wall is on the inside of the curve (outside corner)
+    var rc, rw;
+    if (profilePosted) {
+      rw = postedRadius;
+      rc = wallInside ? rw + toolRadius : rw - toolRadius;
+    } else {
+      rc = postedRadius;
+      rw = wallInside ? rc - toolRadius : rc + toolRadius;
+    }
+    var factor;
+    if (rc <= edgeFeed.settings.epsilon) {
+      factor = 1; // tool centre does not move along a curve (control would reject this anyway)
+    } else if (rw <= edgeFeed.settings.epsilon) {
+      factor = Infinity;
+    } else {
+      factor = rc / rw;
+    }
+    return {factor:factor, centreRadius:rc, wallRadius:rw};
+  },
+
+  /** Clamps a factor and applies it to the feed. */
+  applyFactor: function (feed, factor, limits) {
+    var k = Math.max(limits.minFactor, Math.min(limits.maxFactor, factor));
+    var f = feed * k;
+    if ((limits.maxFeed > 0) && (k > 1)) {
+      f = Math.min(f, Math.max(feed, limits.maxFeed)); // never raise above the max feed, never lower a programmed feed
+    }
+    return {feed:f, factor:f / feed, capped:(k != factor) || (f != feed * k)};
+  },
+
+  /**
+    Fits a circle through 3 points in the XY plane.
+    @return {radius, turn, angle, l1, l2} turn is +1 (left/CCW), -1 (right/CW) or 0 (straight), angle is the turn angle in radians
+  */
+  fitCircle: function (p0, p1, p2) {
+    var ax = p1.x - p0.x, ay = p1.y - p0.y;
+    var bx = p2.x - p1.x, by = p2.y - p1.y;
+    var cx = p2.x - p0.x, cy = p2.y - p0.y;
+    var l1 = Math.sqrt(ax * ax + ay * ay);
+    var l2 = Math.sqrt(bx * bx + by * by);
+    var l3 = Math.sqrt(cx * cx + cy * cy);
+    var cross = ax * by - ay * bx;
+    var dot = ax * bx + ay * by;
+    var angle = Math.atan2(Math.abs(cross), dot);
+    if ((l1 < edgeFeed.settings.epsilon) || (l2 < edgeFeed.settings.epsilon) || (Math.abs(cross) < 1e-15)) {
+      return {radius:Infinity, turn:0, angle:0, l1:l1, l2:l2};
+    }
+    var radius = (l1 * l2 * l3) / (2 * Math.abs(cross));
+    return {radius:radius, turn:(cross > 0) ? 1 : -1, angle:angle, l1:l1, l2:l2};
+  },
+
+  /** Returns the sagitta of a chord of the given length on a circle (Infinity if the chord does not fit). */
+  sagitta: function (radius, chord) {
+    if (!isFinite(radius)) {
+      return 0;
+    }
+    var h = radius * radius - chord * chord / 4;
+    return (h < 0) ? Infinity : radius - Math.sqrt(h);
+  },
+
+  /**
+    Classifies the joint p1 between segments p0-p1 and p1-p2.
+    @return {curve:boolean, radius, turn}
+  */
+  classifyJoint: function (p0, p1, p2, tolerance, margin) {
+    var c = edgeFeed.fitCircle(p0, p1, p2);
+    if ((c.turn == 0) || (c.angle < edgeFeed.settings.minTurnAngle)) {
+      return {curve:false, radius:Infinity, turn:0};
+    }
+    var limit = tolerance * (1 + margin);
+    var curve = (edgeFeed.sagitta(c.radius, c.l1) <= limit) && (edgeFeed.sagitta(c.radius, c.l2) <= limit);
+    return {curve:curve, radius:c.radius, turn:c.turn};
+  },
+
+  /**
+    Classifies segment p1-p2 from the joints at both of its ends.
+    @return {curve:boolean, radius, turn}
+  */
+  classifySegment: function (p0, p1, p2, p3, tolerance, margin) {
+    if (!p0 || !p3) {
+      return {curve:false, radius:Infinity, turn:0}; // an end of a chain, not enough information
+    }
+    var a = edgeFeed.classifyJoint(p0, p1, p2, tolerance, margin);
+    var b = edgeFeed.classifyJoint(p1, p2, p3, tolerance, margin);
+    if (!a.curve || !b.curve || (a.turn != b.turn)) {
+      return {curve:false, radius:Infinity, turn:0};
+    }
+    var ratio = Math.max(a.radius, b.radius) / Math.min(a.radius, b.radius);
+    if (ratio > edgeFeed.settings.radiusRatio) {
+      return {curve:false, radius:Infinity, turn:0};
+    }
+    return {curve:true, radius:(a.radius + b.radius) / 2, turn:a.turn};
+  },
+
+  /**
+    Works out the side of the direction of travel where the wall is.
+    @param parameters {compensation, direction, bothWays, clockwiseSpindle}
+    @return {side:+1|-1|0, source:string} side 0 means unknown
+  */
+  wallSide: function (parameters) {
+    if (parameters.compensation == "left") {
+      return {side:-1, source:"compensation left"}; // tool on the left of the material, wall on the right
+    }
+    if (parameters.compensation == "right") {
+      return {side:1, source:"compensation right"};
+    }
+    if (parameters.bothWays || (parameters.direction == "both ways")) { // adaptive uses bothWays, facing uses direction
+      return {side:0, source:"both ways"};
+    }
+    var side;
+    if (parameters.direction == "climb") {
+      side = -1; // climb milling with M3: wall on the right
+    } else if (parameters.direction == "conventional") {
+      side = 1;
+    } else {
+      return {side:0, source:"no direction"};
+    }
+    if (!parameters.clockwiseSpindle) {
+      side = -side;
+    }
+    return {side:side, source:parameters.direction + (parameters.clockwiseSpindle ? "" : " M4")};
+  },
+
+  /* ---------------------------------------------------------------------------------------------
+     Post kernel integration
+  --------------------------------------------------------------------------------------------- */
+
+  /** Call once from onOpen(). */
+  init: function (host) {
+    edgeFeed.host = host;
+    if (edgeFeed.settings.movements === undefined) {
+      edgeFeed.settings.movements = [MOVEMENT_CUTTING, MOVEMENT_FINISH_CUTTING, MOVEMENT_REDUCED];
+    }
+    edgeFeed.state = {active:false};
+    edgeFeed.buffer = undefined;
+  },
+
+  /** Returns true when the module adjusts feeds in the current section. */
+  isActive: function () {
+    return edgeFeed.state && edgeFeed.state.active;
+  },
+
+  /** Call from onSection(), after the tool has been selected. */
+  onSection: function (section, sectionTool) {
+    edgeFeed.flush();
+    var s = {active:false, adjusted:0, capped:0, minFactor:Infinity, maxFactor:0};
+    edgeFeed.state = s;
+    if (!section.getProperty("edgeFeedEnable", false)) {
+      return;
+    }
+    var name = section.hasParameter("operation-comment") ? section.getParameter("operation-comment") : ("#" + (section.getId() + 1));
+    var skip = function (reason) {
+      warning(subst("Edge feed not applied: %1.", reason)); // Fusion prefixes warnings with the operation name
+    };
+    var parameter = function (key, defaultValue) {
+      return section.hasParameter(key) ? section.getParameter(key) : defaultValue;
+    };
+    if (section.isMultiAxis() || !section.isZOriented()) {
+      skip("the tool axis is not along Z");
+      return;
+    }
+    if (parameter("operation:isDrillingStrategy", 0) || parameter("operation:isProbingStrategy", 0) ||
+      parameter("operation:isInspectionStrategy", 0) || parameter("operation:isTurningStrategy", 0)) {
+      skip("not supported for this strategy");
+      return;
+    }
+    var toolRadius = sectionTool.diameter / 2;
+    if (!(toolRadius > 0)) {
+      skip("the tool diameter is zero");
+      return;
+    }
+    var side = edgeFeed.wallSide({
+      compensation    : parameter("operation:compensation", undefined),
+      direction       : parameter("operation:direction", undefined),
+      bothWays        : parameter("operation:bothWays", 0) == 1,
+      clockwiseSpindle: sectionTool.clockwise
+    });
+    if (side.side == 0) {
+      skip((side.source == "both ways") ? "not available for operations that cut both ways" : "the wall side is unknown (" + side.source + ")");
+      return;
+    }
+    var compensationType = parameter("operation:compensationType", "computer");
+    s.active = true;
+    s.name = name;
+    s.toolRadius = toolRadius;
+    s.side = side.side;
+    s.sideSource = side.source;
+    s.profilePosted = (compensationType == "control");
+    s.tolerance = parameter("operation:tolerance", 0.01);
+    s.margin = getProperty("edgeFeedSagittaMargin", 0.5);
+    s.debug = getProperty("edgeFeedDebug", false);
+    s.limits = {
+      minFactor: getProperty("edgeFeedMinFactor", 0.1),
+      maxFactor: section.getProperty("edgeFeedMaxFactor", 2),
+      maxFeed  : getProperty("edgeFeedMaxFeed", 0)
+    };
+    if (s.debug && edgeFeed.host.writeComment) {
+      edgeFeed.host.writeComment("EF " + EDGE_FEED_VERSION + " ON wall " + (s.side > 0 ? "left" : "right") +
+        " (" + s.sideSource + ") r=" + s.toolRadius + " tol=" + s.tolerance + (s.profilePosted ? " profile posted" : ""));
+    }
+  },
+
+  /** Returns the adjusted feed for a curve of the given posted radius and turn direction. */
+  adjust: function (feed, postedRadius, turn) {
+    var s = edgeFeed.state;
+    var curve = edgeFeed.curveFactor(postedRadius, s.toolRadius, turn, s.side, s.profilePosted);
+    var result = edgeFeed.applyFactor(feed, curve.factor, s.limits);
+    s.adjusted++;
+    if (result.capped) {
+      s.capped++;
+    }
+    s.minFactor = Math.min(s.minFactor, result.factor);
+    s.maxFactor = Math.max(s.maxFactor, result.factor);
+    if (s.debug && edgeFeed.host.writeComment) {
+      edgeFeed.host.writeComment("EF R=" + edgeFeed.round(postedRadius) + " k=" + edgeFeed.round(result.factor) + (result.capped ? " capped" : ""));
+    }
+    return result.feed;
+  },
+
+  round: function (value) {
+    return isFinite(value) ? Math.round(value * 1000) / 1000 : value;
+  },
+
+  isAdjustedMovement: function () {
+    return edgeFeed.settings.movements.indexOf(movement) != -1;
+  },
+
+  /** Call from onCircular() before writing the arc. Returns the feed to output. */
+  circularFeed: function (clockwise, cx, cy, cz, x, y, z, feed) {
+    edgeFeed.flush();
+    if (!edgeFeed.isActive() || !edgeFeed.isAdjustedMovement() || (getCircularPlane() != PLANE_XY)) {
+      return feed;
+    }
+    return edgeFeed.adjust(feed, getCircularRadius(), clockwise ? -1 : 1);
+  },
+
+  /**
+    Call from onLinear(). Returns true when the move has been taken into the look-ahead buffer, in which
+    case the post must not output it (the module outputs it later through host.writeLinear).
+  */
+  onLinear: function (x, y, z, feed) {
+    if (!edgeFeed.isActive()) {
+      return false;
+    }
+    var start = getCurrentPosition();
+    var end = {x:x, y:y, z:z};
+    var dx = x - start.x, dy = y - start.y, dz = z - start.z;
+    var xy = Math.sqrt(dx * dx + dy * dy);
+    var length = Math.sqrt(xy * xy + dz * dz);
+    if (length < edgeFeed.settings.epsilon) {
+      edgeFeed.flush();
+      return false; // feed-only record, let the post handle it
+    }
+    var segment = {
+      start   : {x:start.x, y:start.y, z:start.z},
+      end     : end,
+      feed    : feed,
+      eligible: edgeFeed.isAdjustedMovement() && (xy >= edgeFeed.settings.minXYFraction * length)
+    };
+    var b = edgeFeed.buffer;
+    if (b && b.pending) {
+      edgeFeed.emitPending(end);
+      b.previous = b.pending.start;
+      b.pending = segment;
+    } else {
+      edgeFeed.buffer = {previous:undefined, pending:segment};
+    }
+    return true;
+  },
+
+  /** Outputs the buffered segment, using 'next' (the end of the following segment) as look-ahead. */
+  emitPending: function (next) {
+    var b = edgeFeed.buffer;
+    var p = b.pending;
+    var feed = p.feed;
+    if (p.eligible) {
+      var s = edgeFeed.state;
+      var c = edgeFeed.classifySegment(b.previous, p.start, p.end, next, s.tolerance, s.margin);
+      if (c.curve) {
+        feed = edgeFeed.adjust(p.feed, c.radius, c.turn);
+      }
+    }
+    edgeFeed.host.writeLinear(p.end.x, p.end.y, p.end.z, feed);
+  },
+
+  /** Outputs any buffered move. Call from every entry point that writes output. */
+  flush: function () {
+    var b = edgeFeed.buffer;
+    if (b && b.pending) {
+      edgeFeed.emitPending(undefined); // the end of a chain is never adjusted
+    }
+    edgeFeed.buffer = undefined;
+  },
+
+  /** Call from onSectionEnd(). */
+  onSectionEnd: function () {
+    edgeFeed.flush();
+    var s = edgeFeed.state;
+    if (s && s.active && s.debug && edgeFeed.host.writeComment) {
+      edgeFeed.host.writeComment("EF " + s.adjusted + " moves adjusted" +
+        (s.adjusted > 0 ? ", k " + edgeFeed.round(s.minFactor) + " to " + edgeFeed.round(s.maxFactor) + ", " + s.capped + " capped" : ""));
+    }
+    edgeFeed.state = {active:false};
+  }
+};
+// <<<<< INCLUDED FROM edgeFeed.cpi
+edgeFeedMergeProperties(properties);
 
 var singleLineCoolant = false; // specifies to output multiple coolant codes in one line rather than in separate lines
 // samples:
@@ -194,6 +619,7 @@ var parkPosition = {x:300, y:400}; // end of program park
 
 //manually add gcode using manual nc pass through command
 function onPassThrough(text) {
+  edgeFeed.flush();
   var commands = String(text).split(",");
   for (text in commands) {
     if(commands[text]==='front'){
@@ -226,6 +652,7 @@ function writeDprntFilePath(path) {
 }
 
 function onOpen() {
+  edgeFeed.init({writeLinear:writeLinear, writeComment:writeComment});
 
   if (getProperty("isnc") && (highFeedrate <= 0)) {
     error(localize("You must set 'highFeedrate' because axes are not synchronized in HURCO ISO NC mode."));
@@ -418,6 +845,7 @@ function onOpen() {
 }
 
 function onComment(message) {
+  edgeFeed.flush();
   writeComment(message);
 }
 
@@ -805,10 +1233,6 @@ function onSection() {
       // writeComment("strategy: " + getParameter("operation-strategy"));//currentSection.getId());
     }
   }
-  // TEMPORARY edge feed spike: confirms the operation-scoped properties reach the post (remove once the module is in)
-  if (currentSection.getProperty("edgeFeedEnable", false)) {
-    writeComment("EDGE FEED SPIKE: enabled, max factor " + currentSection.getProperty("edgeFeedMaxFactor", 2));
-  }
 
   if(tool.comment==="broach"||(tool.comment).startsWith("broach")){
     isBroach = true;
@@ -1115,7 +1539,12 @@ function onSection() {
   } else {
     activeMovements = undefined;
   }
-  
+
+  edgeFeed.onSection(currentSection, tool);
+  if (edgeFeed.isActive()) {
+    activeMovements = undefined; // parametric feeds are not used with buffered edge feed moves
+  }
+
   if (isProbeOperation()) {
     if (g68RotationMode != 0) {
       error(localize("You cannot probe while G68 Rotation is in effect."));
@@ -1138,6 +1567,7 @@ function onSection() {
 }
 
 function onDwell(seconds) {
+  edgeFeed.flush();
   if (seconds > 9999.999) {
     warning(localize("Dwelling time is out of range."));
   }
@@ -1146,10 +1576,12 @@ function onDwell(seconds) {
 }
 
 function onSpindleSpeed(spindleSpeed) {
+  edgeFeed.flush();
   writeBlock(sOutput.format(spindleSpeed));
 }
 
 function onCycle() {
+  edgeFeed.flush();
   writeBlock(gPlaneModal.format(17));
 }
 
@@ -1265,6 +1697,7 @@ function nullProbeAngle(force) {
 }
 
 function onCyclePoint(x, y, z) {
+  edgeFeed.flush();
   if (cycleType == "inspect") {
     if (typeof inspectionCycleInspect == "function") {
       inspectionCycleInspect(cycle, x, y, z);
@@ -2076,6 +2509,7 @@ function getProbingArguments(cycle, probeWorkOffsetCode) {
 }
 
 function onCycleEnd() {
+  edgeFeed.flush();
   if (isProbeOperation()) {
     zOutput.reset();
     gMotionModal.reset();
@@ -2091,11 +2525,13 @@ function onCycleEnd() {
 var pendingRadiusCompensation = -1;
 
 function onRadiusCompensation() {
+  edgeFeed.flush();
   pendingRadiusCompensation = radiusCompensation;
 }
 
 var forceG0 = true; // add this line
 function onRapid(_x, _y, _z) {
+  edgeFeed.flush();
   var x = xOutput.format(_x);
   var y = yOutput.format(_y);
   var z = zOutput.format(_z);
@@ -2115,6 +2551,15 @@ function onRapid(_x, _y, _z) {
 }
 
 function onLinear(_x, _y, _z, feed) {
+  if ((pendingRadiusCompensation < 0) && edgeFeed.onLinear(_x, _y, _z, feed)) {
+    return; // buffered by the edge feed module, written later through writeLinear()
+  }
+  edgeFeed.flush();
+  writeLinear(_x, _y, _z, feed);
+}
+
+/** Writes a linear move. Must not use getCurrentPosition(), as the edge feed module calls it one move late. */
+function writeLinear(_x, _y, _z, feed) {
   if (pendingRadiusCompensation >= 0) {
     // ensure that we end at desired position when compensation is turned off
     xOutput.reset();
@@ -2157,6 +2602,7 @@ function onLinear(_x, _y, _z, feed) {
 }
 
 function onRapid5D(_x, _y, _z, _a, _b, _c) {
+  edgeFeed.flush();
   if (pendingRadiusCompensation >= 0) {
     error(localize("Radius compensation mode cannot be changed at rapid traversal."));
     return;
@@ -2196,6 +2642,7 @@ function onRapid5D(_x, _y, _z, _a, _b, _c) {
 }
 
 function onLinear5D(_x, _y, _z, _a, _b, _c, feed) {
+  edgeFeed.flush();
   if (pendingRadiusCompensation >= 0) {
     error(localize("Radius compensation cannot be activated/deactivated for 5-axis move."));
     return;
@@ -2245,6 +2692,7 @@ function onCircular(clockwise, cx, cy, cz, x, y, z, feed) {
     error(localize("Radius compensation cannot be activated/deactivated for a circular move."));
     return;
   }
+  feed = edgeFeed.circularFeed(clockwise, cx, cy, cz, x, y, z, feed); // also flushes buffered linear moves
 
   var start = getCurrentPosition();
 
@@ -2421,6 +2869,7 @@ var mapCommand = {
 };
 
 function onCommand(command) {
+  edgeFeed.flush();
   switch (command) {
   case COMMAND_STOP:
     writeBlock(mFormat.format(0));
@@ -2501,6 +2950,7 @@ function onCommand(command) {
 }
 
 function onSectionEnd() {
+  edgeFeed.onSectionEnd(); // writes any buffered move
   if (typeof inspectionProcessSectionEnd == "function") {
     inspectionProcessSectionEnd();
   }
@@ -2702,6 +3152,7 @@ function machineSimulation(parameters) {
 // End of machine simulation connection move support
 
 function onClose() {
+  edgeFeed.flush();
   nullProbeAngle(false);
   setCoolant(COOLANT_OFF);
 
