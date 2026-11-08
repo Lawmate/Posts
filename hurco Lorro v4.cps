@@ -89,26 +89,30 @@ properties = {
   Porting into a post (see README.md for details):
     1. Paste this file (or use tools/inline.sh) anywhere at top level in the post.
     2. Merge the properties:   edgeFeedMergeProperties(properties);   (top level, after 'properties')
-    3. onOpen():               edgeFeed.init({writeLinear:writeLinear, writeComment:writeComment});
+    3. onOpen():               edgeFeed.init({writeLinear:writeLinear, writeArcXY:writeArcXY, writeComment:writeComment});
+                               writeLinear(x, y, z, feed) and writeArcXY(clockwise, cx, cy, x, y, z, feed, start) write one move
+                               without using getCurrentPosition() or other current-record functions (they are called late).
+                               writeArcXY is optional; without it corner rolls are not grouped into faceted curves.
     4. onSection():            edgeFeed.onSection(currentSection, tool);
     5. onLinear():             if (pendingRadiusCompensation < 0 && edgeFeed.onLinear(_x, _y, _z, feed)) {return;}
                                edgeFeed.flush();  // then the post's normal linear output, moved into writeLinear()
-    6. onCircular():           feed = edgeFeed.circularFeed(clockwise, cx, cy, cz, x, y, z, feed);
+    6. onCircular():           if (edgeFeed.onCircular(clockwise, cx, cy, cz, x, y, z, feed)) {return;}
+                               feed = edgeFeed.circularFeed(clockwise, cx, cy, cz, x, y, z, feed);
     7. Every other entry point that writes output (onRapid, onRapid5D, onLinear5D, onCycle, onCyclePoint,
        onCommand, onDwell, onPassThrough, onRadiusCompensation, onSectionEnd, ...): edgeFeed.flush();
     8. onSectionEnd():         edgeFeed.onSectionEnd();
 */
 
-var EDGE_FEED_VERSION = "0.1.0";
+var EDGE_FEED_VERSION = "0.2.0";
 
 var edgeFeedProperties = {
   edgeFeedEnable: {
     title      : "Edge feed: enable",
-    description: "Adjust the centre-line feed so the cutting edge in contact with the wall moves at the programmed feed. Can be set per operation in the Post Process tab.",
+    description: "Adjust the centre-line feed so the cutting edge in contact with the wall moves at the programmed feed. Set per operation in the Post Process tab.",
     group      : "preferences",
     type       : "boolean",
     value      : false,
-    scope      : ["post", "operation"]
+    scope      : "operation"
   },
   edgeFeedMaxFactor: {
     title      : "Edge feed: max speed-up factor",
@@ -140,6 +144,14 @@ var edgeFeedProperties = {
     group      : "preferences",
     type       : "number",
     value      : 0.5,
+    scope      : "post"
+  },
+  edgeFeedVertexSweep: {
+    title      : "Edge feed: facet vertex sweep (deg)",
+    description: "Fusion rolls the tool around each sharp outside corner with an arc of the tool radius. Corner rolls up to this sweep are treated as vertices of a faceted curve, and get the feed of a circle fitted through the vertices. Larger corner rolls are real corners and get the max speed-up factor.",
+    group      : "preferences",
+    type       : "number",
+    value      : 15,
     scope      : "post"
   },
   edgeFeedDebug: {
@@ -379,6 +391,7 @@ var edgeFeed = {
     s.profilePosted = (compensationType == "control");
     s.tolerance = parameter("operation:tolerance", 0.01);
     s.margin = getProperty("edgeFeedSagittaMargin", 0.5);
+    s.vertexSweep = getProperty("edgeFeedVertexSweep", 15) * Math.PI / 180;
     s.debug = getProperty("edgeFeedDebug", false);
     s.limits = {
       minFactor: getProperty("edgeFeedMinFactor", 0.1),
@@ -392,7 +405,7 @@ var edgeFeed = {
   },
 
   /** Returns the adjusted feed for a curve of the given posted radius and turn direction. */
-  adjust: function (feed, postedRadius, turn) {
+  adjust: function (feed, postedRadius, turn, label) {
     var s = edgeFeed.state;
     var curve = edgeFeed.curveFactor(postedRadius, s.toolRadius, turn, s.side, s.profilePosted);
     var result = edgeFeed.applyFactor(feed, curve.factor, s.limits);
@@ -403,7 +416,7 @@ var edgeFeed = {
     s.minFactor = Math.min(s.minFactor, result.factor);
     s.maxFactor = Math.max(s.maxFactor, result.factor);
     if (s.debug && edgeFeed.host.writeComment) {
-      edgeFeed.host.writeComment("EF R=" + edgeFeed.round(postedRadius) + " k=" + edgeFeed.round(result.factor) + (result.capped ? " capped" : ""));
+      edgeFeed.host.writeComment("EF " + (label ? label + " " : "") + "R=" + edgeFeed.round(postedRadius) + " k=" + edgeFeed.round(result.factor) + (result.capped ? " capped" : ""));
     }
     return result.feed;
   },
@@ -443,13 +456,16 @@ var edgeFeed = {
       return false; // feed-only record, let the post handle it
     }
     var segment = {
+      type    : "line",
       start   : {x:start.x, y:start.y, z:start.z},
       end     : end,
       feed    : feed,
       eligible: edgeFeed.isAdjustedMovement() && (xy >= edgeFeed.settings.minXYFraction * length)
     };
     var b = edgeFeed.buffer;
-    if (b && b.pending) {
+    if (b && b.run) {
+      b.run.push(segment); // inside a facet run, decided when the run ends
+    } else if (b && b.pending) {
       edgeFeed.emitPending(end);
       b.previous = b.pending.start;
       b.pending = segment;
@@ -474,13 +490,110 @@ var edgeFeed = {
     edgeFeed.host.writeLinear(p.end.x, p.end.y, p.end.z, feed);
   },
 
+  /**
+    Call from onCircular() before anything else. Returns true when the arc is a corner roll that has been
+    taken into the buffer, in which case the post must not output it (the module outputs it later through
+    host.writeArcXY). A corner roll is the arc Fusion adds to roll the tool around a sharp outside corner:
+    its radius is the tool radius, its centre is the part corner, and its sweep is the corner angle.
+  */
+  onCircular: function (clockwise, cx, cy, cz, x, y, z, feed) {
+    var s = edgeFeed.state;
+    if (!edgeFeed.isActive() || !edgeFeed.host.writeArcXY || s.profilePosted || !edgeFeed.isAdjustedMovement() ||
+      (getCircularPlane() != PLANE_XY) || isFullCircle()) {
+      return false;
+    }
+    var start = getCurrentPosition();
+    var turn = clockwise ? -1 : 1;
+    if ((Math.abs(z - start.z) > edgeFeed.settings.epsilon) || (turn != s.side) || // helical, or wall not on the inside
+      (Math.abs(getCircularRadius() - s.toolRadius) > Math.max(s.tolerance, 0.001)) || // not a roll around a point
+      (getCircularSweep() > s.vertexSweep)) { // a real corner
+      return false;
+    }
+    var roll = {
+      type     : "roll",
+      clockwise: clockwise,
+      cx       : cx,
+      cy       : cy,
+      start    : {x:start.x, y:start.y, z:start.z},
+      end      : {x:x, y:y, z:z},
+      feed     : feed,
+      turn     : turn,
+      radius   : getCircularRadius()
+    };
+    var b = edgeFeed.buffer;
+    if (b && b.run) {
+      b.run.push(roll);
+    } else {
+      var run = (b && b.pending) ? [b.pending] : []; // a pending line becomes the lead-in of the run, unchanged
+      run.push(roll);
+      edgeFeed.buffer = {run:run};
+    }
+    return true;
+  },
+
+  /**
+    Outputs a facet run: corner rolls and the lines between them. Each roll gets the wall radius of the circle
+    through its own corner and its neighbouring corners, and each line the mean of the corners at its ends.
+    The first and last roll of a run have only one neighbour and are treated as real corners.
+  */
+  emitRun: function (run) {
+    var s = edgeFeed.state;
+    var rolls = [];
+    for (var i = 0; i < run.length; ++i) {
+      if (run[i].type == "roll") {
+        rolls.push(i);
+      }
+    }
+    for (var k = 0; k < rolls.length; ++k) {
+      var r = run[rolls[k]];
+      r.wallRadius = undefined;
+      if ((k > 0) && (k < rolls.length - 1)) {
+        var a = run[rolls[k - 1]], c = run[rolls[k + 1]];
+        var fit = edgeFeed.fitCircle({x:a.cx, y:a.cy}, {x:r.cx, y:r.cy}, {x:c.cx, y:c.cy});
+        if ((fit.turn == r.turn) && (a.turn == r.turn) && (c.turn == r.turn) && isFinite(fit.radius)) {
+          r.wallRadius = fit.radius;
+        }
+      }
+    }
+    var previousRoll; // the last roll before the current item
+    for (var j = 0; j < run.length; ++j) {
+      var item = run[j];
+      var feed = item.feed;
+      if (item.type == "roll") {
+        if (item.wallRadius !== undefined) {
+          feed = edgeFeed.adjust(item.feed, item.wallRadius + s.toolRadius, item.turn, "facet");
+        } else {
+          feed = edgeFeed.adjust(item.feed, item.radius, item.turn, "corner"); // wall radius ~0, max factor
+        }
+        edgeFeed.host.writeArcXY(item.clockwise, item.cx, item.cy, item.end.x, item.end.y, item.end.z, feed, item.start);
+        previousRoll = item;
+      } else {
+        var nextRoll;
+        for (var n = j + 1; n < run.length; ++n) {
+          if (run[n].type == "roll") {
+            nextRoll = run[n];
+            break;
+          }
+        }
+        if (item.eligible && previousRoll && nextRoll && (previousRoll.wallRadius !== undefined) && (nextRoll.wallRadius !== undefined)) {
+          feed = edgeFeed.adjust(item.feed, (previousRoll.wallRadius + nextRoll.wallRadius) / 2 + s.toolRadius, previousRoll.turn, "facet");
+        }
+        edgeFeed.host.writeLinear(item.end.x, item.end.y, item.end.z, feed);
+      }
+    }
+  },
+
   /** Outputs any buffered move. Call from every entry point that writes output. */
   flush: function () {
     var b = edgeFeed.buffer;
-    if (b && b.pending) {
-      edgeFeed.emitPending(undefined); // the end of a chain is never adjusted
-    }
     edgeFeed.buffer = undefined;
+    if (b && b.run) {
+      edgeFeed.emitRun(b.run);
+    } else if (b && b.pending) {
+      edgeFeed.buffer = b;
+      edgeFeed.emitPending(undefined); // the end of a chain is never adjusted
+      edgeFeed.buffer = undefined;
+    }
   },
 
   /** Call from onSectionEnd(). */
@@ -652,7 +765,7 @@ function writeDprntFilePath(path) {
 }
 
 function onOpen() {
-  edgeFeed.init({writeLinear:writeLinear, writeComment:writeComment});
+  edgeFeed.init({writeLinear:writeLinear, writeArcXY:writeArcXY, writeComment:writeComment});
 
   if (getProperty("isnc") && (highFeedrate <= 0)) {
     error(localize("You must set 'highFeedrate' because axes are not synchronized in HURCO ISO NC mode."));
@@ -2686,13 +2799,28 @@ function onLinear5D(_x, _y, _z, _a, _b, _c, feed) {
   }
 }
 
+/**
+  Writes a partial arc in the XY plane from the given start point. Must not use getCurrentPosition(),
+  as the edge feed module calls it one or more moves late.
+*/
+function writeArcXY(clockwise, cx, cy, x, y, z, feed, start) {
+  if (getProperty("isnc")) {
+    writeBlock(gAbsIncModal.format(90), gPlaneModal.format(17), gMotionModal.format(clockwise ? 2 : 3), xOutput.format(x), yOutput.format(y), zOutput.format(z), irOutput.format(cx - start.x, 0), jrOutput.format(cy - start.y, 0), getFeed(feed));
+  } else {
+    writeBlock(gAbsIncModal.format(90), gPlaneModal.format(17), gMotionModal.format(clockwise ? 2 : 3), xOutput.format(x), yOutput.format(y), zOutput.format(z), iOutput.format(cx), jOutput.format(cy), getFeed(feed));
+  }
+}
+
 function onCircular(clockwise, cx, cy, cz, x, y, z, feed) {
   // writeComment(toDeg(getCircularSweep()));
   if (pendingRadiusCompensation >= 0) {
     error(localize("Radius compensation cannot be activated/deactivated for a circular move."));
     return;
   }
-  feed = edgeFeed.circularFeed(clockwise, cx, cy, cz, x, y, z, feed); // also flushes buffered linear moves
+  if (edgeFeed.onCircular(clockwise, cx, cy, cz, x, y, z, feed)) {
+    return; // corner roll buffered by the edge feed module, written later through writeArcXY()
+  }
+  feed = edgeFeed.circularFeed(clockwise, cx, cy, cz, x, y, z, feed); // also flushes buffered moves
 
   var start = getCurrentPosition();
 
@@ -2731,11 +2859,7 @@ function onCircular(clockwise, cx, cy, cz, x, y, z, feed) {
   } else {
     switch (getCircularPlane()) {
     case PLANE_XY:
-      if (getProperty("isnc")) {
-        writeBlock(gAbsIncModal.format(90), gPlaneModal.format(17), gMotionModal.format(clockwise ? 2 : 3), xOutput.format(x), yOutput.format(y), zOutput.format(z), irOutput.format(cx - start.x, 0), jrOutput.format(cy - start.y, 0), getFeed(feed));
-      } else {
-        writeBlock(gAbsIncModal.format(90), gPlaneModal.format(17), gMotionModal.format(clockwise ? 2 : 3), xOutput.format(x), yOutput.format(y), zOutput.format(z), iOutput.format(cx), jOutput.format(cy), getFeed(feed));
-      }
+      writeArcXY(clockwise, cx, cy, x, y, z, feed, start);
       break;
     case PLANE_ZX:
       if (isHelical()) {
