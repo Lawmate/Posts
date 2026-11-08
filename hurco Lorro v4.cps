@@ -37,61 +37,39 @@ highFeedrate = (unit == IN) ? 100 : 5000;
 
 // user-defined properties
 properties = {
-  writeMachine: true, // write machine
-  writeTools: true, // writes the tools
-  preloadTool: true, // preloads next tool on tool change if any
-  showSequenceNumbers: true, // show sequence numbers
-  sequenceNumberStart: 1, // first sequence number
-  sequenceNumberIncrement: 1, // increment for sequence numbers
-  broachReversal: 1,
-  optionalStop: true, // optional stop
-  isnc: true, // specifies the mode ISNC (ISO NC mode) or BNC (Basic NC mode)
-  separateWordsWithSpace: true, // specifies that the words should be separated with a white space
-  allow3DArcs: false, // specifies that 3D circular moves are allowed
-  useParametricFeed: false, // specifies that feed should be output using Q values
-  showNotes: false, // specifies that operation notes should be output.
-  preferPositiveTilt: false, // prefer positive/negative tilt
-  safeToolChangePositionX: false, // safe tool change position in X
-  safeToolChangePositionY: false, // safe tool change position in Y
-  machineAxisABC: "ABC", // specify your machine axes here for use with vectors output only.
-  safePositionMethod: "G53" // specifies the desired safe position option
-};
-
-// user-defined property definitions
-propertyDefinitions = {
-  writeMachine: {title:"Write machine", description:"Output the machine settings in the header of the code.", group:0, type:"boolean"},
-  writeTools: {title:"Write tool list", description:"Output a tool list in the header of the code.", group:0, type:"boolean"},
-  preloadTool: {title:"Preload tool", description:"Preloads the next tool at a tool change (if any).", type:"boolean"},
-  showSequenceNumbers: {title:"Use sequence numbers", description:"Use sequence numbers for each block of outputted code.", group:1, type:"boolean"},
-  sequenceNumberStart: {title:"Start sequence number", description:"The number at which to start the sequence numbers.", group:1, type:"integer"},
-  sequenceNumberIncrement: {title:"Sequence number increment", description:"The amount by which the sequence number is incremented by in each block.", group:1, type:"integer"},
-  optionalStop: {title:"Optional stop", description:"Outputs optional stop code during when necessary in the code.", type:"boolean"},
-  isnc:{title: "Use ISNC or BNC mode", description: "Selects between ISNC (ISO NC mode) and BNC (Basic NC mode).", type: "boolean", values: ["Basic NC mode", "ISO NC mode"]},
-  separateWordsWithSpace: {title:"Separate words with space", description:"Adds spaces between words if 'yes' is selected.", type:"boolean"},
-  allow3DArcs: {title:"Allow 3D arcs", description:"Specifies whether 3D circular arcs are allowed.", type:"boolean"},
-  useParametricFeed:  {title:"Parametric feed", description:"Specifies the feed value that should be output using a Q value.", type:"boolean"},
-  showNotes: {title:"Show notes", description:"Writes operation notes as comments in the outputted code.", type:"boolean"},
-  preferPositiveTilt: {title:"Prefer positive tilt", description:"Specifies whether to prefer positive or negative tilt angles.", type:"boolean"},
-  safeToolChangePositionX: {title:"Safe tool change position X", description:"Specify whether to use a safe tool change position in the X axis.", type:"boolean"},
-  safeToolChangePositionY: {title:"Safe tool change position Y", description:"Specify whether to use a safe tool change position in the X axis.", type:"boolean"},
-  machineAxisABC: {title:"Machine axes", description:"Specify your machine axes here, for use with vector output only.", type:"string"},
+  writeMachine: {title:"Write machine", description:"Output the machine settings in the header of the code.", group:"formats", type:"boolean", value:true, scope:"post"},
+  writeTools: {title:"Write tool list", description:"Output a tool list in the header of the code.", group:"formats", type:"boolean", value:true, scope:"post"},
+  preloadTool: {title:"Preload tool", description:"Preloads the next tool at a tool change (if any).", group:"preferences", type:"boolean", value:true, scope:"post"},
+  showSequenceNumbers: {title:"Use sequence numbers", description:"Use sequence numbers for each block of outputted code.", group:"formats", type:"boolean", value:true, scope:"post"},
+  sequenceNumberStart: {title:"Start sequence number", description:"The number at which to start the sequence numbers.", group:"formats", type:"integer", value:1, scope:"post"},
+  sequenceNumberIncrement: {title:"Sequence number increment", description:"The amount by which the sequence number is incremented by in each block.", group:"formats", type:"integer", value:1, scope:"post"},
+  broachReversal: {title:"Broaching tool reversal distance", description:"This is the distance after which the spindle reverses when using a broach tool, to get a straight hole. Zero denotes no reversing.", group:"preferences", type:"integer", range:[0, 9999], value:1, scope:"post"},
+  optionalStop: {title:"Optional stop", description:"Outputs optional stop code during when necessary in the code.", group:"preferences", type:"boolean", value:true, scope:"post"},
+  isnc: {title:"Use ISNC or BNC mode", description:"Selects between ISNC (ISO NC mode) and BNC (Basic NC mode).", group:"configuration", type:"boolean", values:["Basic NC mode", "ISO NC mode"], value:true, scope:"post"},
+  separateWordsWithSpace: {title:"Separate words with space", description:"Adds spaces between words if 'yes' is selected.", group:"formats", type:"boolean", value:true, scope:"post"},
+  allow3DArcs: {title:"Allow 3D arcs", description:"Specifies whether 3D circular arcs are allowed.", group:"preferences", type:"boolean", value:false, scope:"post"},
+  useParametricFeed: {title:"Parametric feed", description:"Specifies the feed value that should be output using a Q value.", group:"preferences", type:"boolean", value:false, scope:"post"},
+  showNotes: {title:"Show notes", description:"Writes operation notes as comments in the outputted code.", group:"formats", type:"boolean", value:false, scope:"post"},
+  preferPositiveTilt: {title:"Prefer positive tilt", description:"Specifies whether to prefer positive or negative tilt angles.", group:"multiAxis", type:"boolean", value:false, scope:"post"},
+  safeToolChangePositionX: {title:"Safe tool change position X", description:"Specify whether to use a safe tool change position in the X axis.", group:"homePositions", type:"boolean", value:false, scope:"post"},
+  safeToolChangePositionY: {title:"Safe tool change position Y", description:"Specify whether to use a safe tool change position in the Y axis.", group:"homePositions", type:"boolean", value:false, scope:"post"},
+  machineAxisABC: {title:"Machine axes", description:"Specify your machine axes here, for use with vector output only.", group:"multiAxis", type:"string", value:"ABC", scope:"post"},
   safePositionMethod: {
-    title: "Safe Retracts",
+    title      : "Safe Retracts",
     description: "Select your desired retract option. 'Clearance Height' retracts to the operation clearance height.",
-    type: "enum",
-    values:[
-      // {title:"G28", id: "G28"},
-      {title:"G53", id: "G53"},
-      {title:"Clearance Height", id: "clearanceHeight"}
-    ]
+    group      : "homePositions",
+    type       : "enum",
+    values     : [
+      // {title:"G28", id:"G28"},
+      {title:"G53", id:"G53"},
+      {title:"Clearance Height", id:"clearanceHeight"}
+    ],
+    value: "G53",
+    scope: "post"
   },
-  broachReversal: {
-    title      : "Broaching tool reversal distance",
-    description: "This is the distance after which the spindle reverses when using a broach tool, to get a straight hole. Zero denotes no reversing.",
-    group:1,
-    type       : "integer",
-    range      : [0,9999]
-  }
+  // edge feed (constant feed at the cutting edge) - IN DEVELOPMENT, these properties have no effect yet
+  edgeFeedEnable: {title:"Edge feed: enable (in development)", description:"Adjust the centre-line feed so the cutting edge in contact with the wall moves at the programmed feed. Set per operation in the Post Process tab.", group:"preferences", type:"boolean", value:false, scope:["post", "operation"]},
+  edgeFeedMaxFactor: {title:"Edge feed: max speed-up factor (in development)", description:"Maximum multiplier applied to the programmed feed on outside arcs. The post value is the default, and an operation can override it.", group:"preferences", type:"number", range:[1, 5], value:2, scope:["post", "operation"]}
 };
 
 var singleLineCoolant = false; // specifies to output multiple coolant codes in one line rather than in separate lines
@@ -175,7 +153,7 @@ probeMultipleFeatures = true;
 
 /** Returns true if the given ABC axis is available for use with vector output. */
 function hasABCAxis(name) {
-  return String(properties.machineAxisABC).toUpperCase().indexOf(name) != -1;
+  return String(getProperty("machineAxisABC")).toUpperCase().indexOf(name) != -1;
 }
 
 /**
@@ -186,13 +164,13 @@ function writeBlock() {
   if (!text) {
     return;
   }
-  if (properties.showSequenceNumbers) {
+  if (getProperty("showSequenceNumbers")) {
     if (text) {
       if (sequenceNumber > 9999999) {
-        sequenceNumber = properties.sequenceNumberStart;
+        sequenceNumber = getProperty("sequenceNumberStart");
       }
       writeWords2("N" + sequenceNumber, text);
-      sequenceNumber += properties.sequenceNumberIncrement;
+      sequenceNumber += getProperty("sequenceNumberIncrement");
     }
   } else {
     writeWords(arguments);
@@ -249,7 +227,7 @@ function writeDprntFilePath(path) {
 
 function onOpen() {
 
-  if (properties.isnc && (highFeedrate <= 0)) {
+  if (getProperty("isnc") && (highFeedrate <= 0)) {
     error(localize("You must set 'highFeedrate' because axes are not synchronized in HURCO ISO NC mode."));
     return;
   }
@@ -274,7 +252,7 @@ function onOpen() {
   }
   
   if (useMultiAxisFeatures && !machineConfiguration.isMultiAxisConfiguration()) {
-    var text = String(properties.machineAxisABC).toUpperCase();
+    var text = String(getProperty("machineAxisABC")).toUpperCase();
     for (var i = 0; i < text.length; ++i) {
       if ("ABC".indexOf(text.charAt(i)) == -1) {
         error(localize("Property 'machineAxisABC' must be A, B, C or any combination of these axes!"));
@@ -283,11 +261,11 @@ function onOpen() {
     }
   }
   
-  if (!properties.separateWordsWithSpace) {
+  if (!getProperty("separateWordsWithSpace")) {
     setWordSeparator("");
   }
 
-  sequenceNumber = properties.sequenceNumberStart;
+  sequenceNumber = getProperty("sequenceNumberStart");
   writeln("%");
 
   if (programName) {
@@ -316,7 +294,7 @@ function onOpen() {
   var model = machineConfiguration.getModel();
   var description = machineConfiguration.getDescription();
 
-  if (properties.writeMachine && (vendor || model || description)) {
+  if (getProperty("writeMachine") && (vendor || model || description)) {
     writeComment(localize("Machine"));
     if (vendor) {
       writeComment("  " + localize("vendor") + ": " + vendor);
@@ -335,7 +313,7 @@ function onOpen() {
   }
 
   // dump tool information
-  if (properties.writeTools) {
+  if (getProperty("writeTools")) {
     var zRanges = {};
     if (is3D()) {
       var numberOfSections = getNumberOfSections();
@@ -414,16 +392,16 @@ function onOpen() {
 
   // absolute coordinates and feed per min
   writeBlock(gAbsIncModal.format(90), gPlaneModal.format(17));
-  if (!properties.isnc) {
+  if (!getProperty("isnc")) {
     writeBlock(gAbsIncModal.format(75)); // multi-quadrant arc interpolation mode
   }
 
   switch (unit) {
   case IN:
-    writeBlock(gUnitModal.format(properties.isnc ? 20 : 70));
+    writeBlock(gUnitModal.format(getProperty("isnc") ? 20 : 70));
     break;
   case MM:
-    writeBlock(gUnitModal.format(properties.isnc ? 21 : 71));
+    writeBlock(gUnitModal.format(getProperty("isnc") ? 21 : 71));
     break;
   }
   onCommand(COMMAND_START_CHIP_TRANSPORT);
@@ -808,11 +786,11 @@ function onSection() {
     
     // save tool change position
     if (insertToolCall && !isFirstSection()) {
-      if (properties.safeToolChangePositionX || properties.safeToolChangePositionY) {
-        writeBlock(gFormat.format(53), conditional(properties.safeToolChangePositionX, "X" + xyzFormat.format(0)), conditional(properties.safeToolChangePositionY, "Y" + xyzFormat.format(0)));
+      if (getProperty("safeToolChangePositionX") || getProperty("safeToolChangePositionY")) {
+        writeBlock(gFormat.format(53), conditional(getProperty("safeToolChangePositionX"), "X" + xyzFormat.format(0)), conditional(getProperty("safeToolChangePositionY"), "Y" + xyzFormat.format(0)));
         machineSimulation({
-          x          : properties.safeToolChangePositionX ? 0 : undefined,
-          y          : properties.safeToolChangePositionY ? 0 : undefined,
+          x          : getProperty("safeToolChangePositionX") ? 0 : undefined,
+          y          : getProperty("safeToolChangePositionY") ? 0 : undefined,
           coordinates: MACHINE,
           feed       : false
         });
@@ -826,6 +804,10 @@ function onSection() {
       writeComment(comment);
       // writeComment("strategy: " + getParameter("operation-strategy"));//currentSection.getId());
     }
+  }
+  // TEMPORARY edge feed spike: confirms the operation-scoped properties reach the post (remove once the module is in)
+  if (currentSection.getProperty("edgeFeedEnable", false)) {
+    writeComment("EDGE FEED SPIKE: enabled, max factor " + currentSection.getProperty("edgeFeedMaxFactor", 2));
   }
 
   if(tool.comment==="broach"||(tool.comment).startsWith("broach")){
@@ -860,7 +842,7 @@ function onSection() {
     }
   }
   
-  if (properties.showNotes && hasParameter("notes")) {
+  if (getProperty("showNotes") && hasParameter("notes")) {
     var notes = getParameter("notes");
     if (notes) {
       var lines = String(notes).split("\n");
@@ -880,7 +862,7 @@ function onSection() {
   
     if (!isFirstSection()) {
       setCoolant(COOLANT_OFF);
-      if (properties.optionalStop) {
+      if (getProperty("optionalStop")) {
         onCommand(COMMAND_OPTIONAL_STOP);
       }
     }
@@ -913,7 +895,7 @@ function onSection() {
       }
     }
 
-    if (properties.preloadTool) {
+    if (getProperty("preloadTool")) {
       var nextTool = getNextTool(tool.number);
       if (nextTool) {
         writeBlock("T" + toolFormat.format(nextTool.number));
@@ -927,7 +909,7 @@ function onSection() {
       }
     }
     if (isProbeOperation() || isInspectionOperation(currentSection)) {
-      if (properties.isnc) {
+      if (getProperty("isnc")) {
         writeBlock(mFormat.format(19)); // spindle orientation
         writeBlock(mFormat.format(26)); // select the part probe, M27 is selecting the tool probe
         writeBlock(mFormat.format(41)); // Single touch probing, M42 is 2 touch probing
@@ -1056,7 +1038,7 @@ function onSection() {
       );
     }
     writeBlock(gFormat.format(43.4));
-    writeBlock(mFormat.format(200), "P" + (properties.preferPositiveTilt ? 1 : 2)); // prefer positive/negative tilt
+    writeBlock(mFormat.format(200), "P" + (getProperty("preferPositiveTilt") ? 1 : 2)); // prefer positive/negative tilt
   } else {
     var initialPosition = getFramePosition(currentSection.getInitialPosition());
     if (!retracted && !insertToolCall) {
@@ -1118,7 +1100,7 @@ function onSection() {
     }
   }
 
-  if (properties.useParametricFeed &&
+  if (getProperty("useParametricFeed") &&
       hasParameter("operation-strategy") &&
       (getParameter("operation-strategy") != "drill") && // legacy
       !(currentSection.hasAnyCycle && currentSection.hasAnyCycle())) {
@@ -1149,8 +1131,8 @@ function onSection() {
   }
 
 /*
-  if (properties.smoothingTolerance > 0) {
-    writeBlock(gFormat.format(5.2), "P1", "Q" + xyzFormat.format(properties.smoothingTolerance));
+  if (getProperty("smoothingTolerance") > 0) {
+    writeBlock(gFormat.format(5.2), "P1", "Q" + xyzFormat.format(getProperty("smoothingTolerance")));
   }
 */
 }
@@ -1173,7 +1155,7 @@ function onCycle() {
 
 function getCommonCycle(x, y, z, r) {
   forceXYZ();
-  if (properties.isnc) {
+  if (getProperty("isnc")) {
     return [xOutput.format(x), yOutput.format(y),
       zOutput.format(z),
       "R" + xyzFormat.format(r)];
@@ -1326,7 +1308,7 @@ function onCyclePoint(x, y, z) {
     
     switch (cycleType) {
     case "drilling":
-      if (properties.isnc) {
+      if (getProperty("isnc")) {
         writeBlock(
           gRetractModal.format(98), gAbsIncModal.format(90), gCycleModal.format(81),
           getCommonCycle(x, y, z, cycle.retract),
@@ -1342,7 +1324,7 @@ function onCyclePoint(x, y, z) {
       break;
     case "counter-boring":
       if (P > 0) {
-        if (properties.isnc) {
+        if (getProperty("isnc")) {
           writeBlock(
             gRetractModal.format(98), gAbsIncModal.format(90), gCycleModal.format(82),
             getCommonCycle(x, y, z, cycle.retract),
@@ -1359,7 +1341,7 @@ function onCyclePoint(x, y, z) {
           );
         }
       } else {
-        if (properties.isnc) {
+        if (getProperty("isnc")) {
           writeBlock(
             gRetractModal.format(98), gAbsIncModal.format(90), gCycleModal.format(81),
             getCommonCycle(x, y, z, cycle.retract),
@@ -1378,7 +1360,7 @@ function onCyclePoint(x, y, z) {
       if ((cycle.accumulatedDepth < (2*cycle.depth)) || (P > 0)) {
         expandCyclePoint(x, y, z);
       } else {
-        if (properties.isnc) {
+        if (getProperty("isnc")) {
           writeBlock(
             gRetractModal.format(98), gAbsIncModal.format(90), gCycleModal.format(73),
             getCommonCycle(x, y, z, cycle.retract),
@@ -1399,7 +1381,7 @@ function onCyclePoint(x, y, z) {
       if (P > 0) {
         expandCyclePoint(x, y, z);
       } else {
-        if (properties.isnc) {
+        if (getProperty("isnc")) {
           writeBlock(
             gRetractModal.format(98), gAbsIncModal.format(90), gCycleModal.format(83),
             getCommonCycle(x, y, z, cycle.retract),
@@ -1424,7 +1406,7 @@ function onCyclePoint(x, y, z) {
       if (true || !F) {
         F = tool.getTappingFeedrate();
       }
-      if (properties.isnc) {
+      if (getProperty("isnc")) {
         writeBlock(mFormat.format(29)); // rigid
         writeBlock(
           gRetractModal.format(98), gAbsIncModal.format(90), gCycleModal.format((tool.type == TOOL_TAP_LEFT_HAND) ? 74 : 84),
@@ -1467,7 +1449,7 @@ function onCyclePoint(x, y, z) {
       if (true || !F) {
         F = tool.getTappingFeedrate();
       }
-      if (properties.isnc) {
+      if (getProperty("isnc")) {
         writeBlock(mFormat.format(29)); // rigid
         writeBlock(
           gRetractModal.format(98), gAbsIncModal.format(90), gCycleModal.format(74),
@@ -1492,7 +1474,7 @@ function onCyclePoint(x, y, z) {
       if (true || !F) {
         F = tool.getTappingFeedrate();
       }
-      if (properties.isnc) {
+      if (getProperty("isnc")) {
         writeBlock(mFormat.format(29)); // rigid
         writeBlock(
           gRetractModal.format(98), gAbsIncModal.format(90), gCycleModal.format(84),
@@ -1526,7 +1508,7 @@ function onCyclePoint(x, y, z) {
       if (true || !F) {
         F = tool.getTappingFeedrate();
       }
-      if (properties.isnc) {
+      if (getProperty("isnc")) {
         forceXYZ();
         writeBlock(mFormat.format(29)); // rigid
         writeBlock(
@@ -1570,7 +1552,7 @@ function onCyclePoint(x, y, z) {
       //trig of the angle and shift distance.
       var Ival = cycle.shift * Math.cos(cycle.shiftOrientation);
       var Jval = cycle.shift * Math.sin(cycle.shiftOrientation);
-      if (properties.isnc) {
+      if (getProperty("isnc")) {
         writeBlock(
           gRetractModal.format(98), gAbsIncModal.format(90), gCycleModal.format(76),
           getCommonCycle(x, y, z, cycle.retract),
@@ -1592,7 +1574,7 @@ function onCyclePoint(x, y, z) {
       }
       break;
     case "back-boring":
-      if (!properties.isnc) {
+      if (!getProperty("isnc")) {
         error(localize("Back boring is not supported."));
       }
       var dx = (gPlaneModal.getCurrent() == 19) ? cycle.backBoreDistance : 0;
@@ -1607,7 +1589,7 @@ function onCyclePoint(x, y, z) {
       );
       break;
     case "reaming":
-      if (properties.isnc) {
+      if (getProperty("isnc")) {
         if(tool.comment==="broach"){
           writeComment("Broaching cycle");
           //feed tool into Top Height position
@@ -1639,7 +1621,7 @@ function onCyclePoint(x, y, z) {
       }
       break;
     case "stop-boring":
-      if ((P > 0) || !properties.isnc) {
+      if ((P > 0) || !getProperty("isnc")) {
         expandCyclePoint(x, y, z);
       } else {
         writeBlock(
@@ -1650,7 +1632,7 @@ function onCyclePoint(x, y, z) {
       }
       break;
     case "manual-boring":
-      if (!properties.isnc) {
+      if (!getProperty("isnc")) {
         error(localize("Manual boring is not supported."));
       }
       writeBlock(
@@ -1661,7 +1643,7 @@ function onCyclePoint(x, y, z) {
       );
       break;
     case "boring":
-      if (properties.isnc) {
+      if (getProperty("isnc")) {
         writeBlock(
           gRetractModal.format(98), gAbsIncModal.format(90), gCycleModal.format(89),
           getCommonCycle(x, y, z, cycle.retract),
@@ -2021,7 +2003,7 @@ function onCyclePoint(x, y, z) {
         if(tool.coolant)writeBlock(mFormat.format(8));
         writeBlock(mFormat.format(3),sOutput.format(tool.spindleRPM));
         // broachingTool = true;
-        var broachRev = properties.broachReversal;
+        var broachRev = getProperty("broachReversal");
         // writeComment("broach rev: " + broachRev);
         if(isBroach && broachRev>0){
           if(isBroach){
@@ -2122,7 +2104,7 @@ function onRapid(_x, _y, _z) {
       error(localize("Radius compensation mode cannot be changed at rapid traversal."));
       return;
     }
-    if (properties.isnc && (((x ? 1 : 0) + (y ? 1 : 0) + (z ? 1 : 0)) > 1) && !forceG0) {
+    if (getProperty("isnc") && (((x ? 1 : 0) + (y ? 1 : 0) + (z ? 1 : 0)) > 1) && !forceG0) {
       // axes are not synchronized
       writeBlock(gMotionModal.format(1), x, y, z, feedOutput.format(highFeedrate));
     } else {
@@ -2186,7 +2168,7 @@ function onRapid5D(_x, _y, _z, _a, _b, _c) {
     var a = aOutput.format(_a);
     var b = bOutput.format(_b);
     var c = cOutput.format(_c);
-    if (properties.isnc) {
+    if (getProperty("isnc")) {
       // axes are not synchronized
       writeBlock(gMotionModal.format(1), x, y, z, a, b, c, feedOutput.format(highFeedrate));
     } else {
@@ -2202,7 +2184,7 @@ function onRapid5D(_x, _y, _z, _a, _b, _c) {
     var j = ijkFormat.format(_b);
     var k = ijkFormat.format(_c);
     if (x || y || z || i || j || k) {
-      if (properties.isnc && !forceG0) {
+      if (getProperty("isnc") && !forceG0) {
         // axes are not synchronized
         writeBlock(gMotionModal.format(1), x, y, z, "I" + i, "J" + j, "K" + k, feedOutput.format(highFeedrate));
       } else {
@@ -2273,14 +2255,14 @@ function onCircular(clockwise, cx, cy, cz, x, y, z, feed) {
     }
     switch (getCircularPlane()) {
     case PLANE_XY:
-      if (properties.isnc) {
+      if (getProperty("isnc")) {
         writeBlock(gAbsIncModal.format(90), gPlaneModal.format(17), gMotionModal.format(clockwise ? 2 : 3), irOutput.format(cx - start.x, 0), jrOutput.format(cy - start.y, 0), getFeed(feed));
       } else {
         writeBlock(gAbsIncModal.format(90), gPlaneModal.format(17), gMotionModal.format(clockwise ? 2 : 3), iOutput.format(cx), jOutput.format(cy), getFeed(feed));
       }
       break;
     case PLANE_ZX:
-      if (properties.isnc) {
+      if (getProperty("isnc")) {
         // right-handed
         writeBlock(gAbsIncModal.format(90), gPlaneModal.format(18), gMotionModal.format(clockwise ? 2 : 3), irOutput.format(cx - start.x, 0), krOutput.format(cz - start.z, 0), getFeed(feed));
       } else {
@@ -2289,7 +2271,7 @@ function onCircular(clockwise, cx, cy, cz, x, y, z, feed) {
       }
       break;
     case PLANE_YZ:
-      if (properties.isnc) {
+      if (getProperty("isnc")) {
         writeBlock(gAbsIncModal.format(90), gPlaneModal.format(19), gMotionModal.format(clockwise ? 2 : 3), jrOutput.format(cy - start.y, 0), krOutput.format(cz - start.z, 0), getFeed(feed));
       } else {
         writeBlock(gAbsIncModal.format(90), gPlaneModal.format(19), gMotionModal.format(clockwise ? 2 : 3), jOutput.format(cy), kOutput.format(cz), getFeed(feed));
@@ -2301,7 +2283,7 @@ function onCircular(clockwise, cx, cy, cz, x, y, z, feed) {
   } else {
     switch (getCircularPlane()) {
     case PLANE_XY:
-      if (properties.isnc) {
+      if (getProperty("isnc")) {
         writeBlock(gAbsIncModal.format(90), gPlaneModal.format(17), gMotionModal.format(clockwise ? 2 : 3), xOutput.format(x), yOutput.format(y), zOutput.format(z), irOutput.format(cx - start.x, 0), jrOutput.format(cy - start.y, 0), getFeed(feed));
       } else {
         writeBlock(gAbsIncModal.format(90), gPlaneModal.format(17), gMotionModal.format(clockwise ? 2 : 3), xOutput.format(x), yOutput.format(y), zOutput.format(z), iOutput.format(cx), jOutput.format(cy), getFeed(feed));
@@ -2313,7 +2295,7 @@ function onCircular(clockwise, cx, cy, cz, x, y, z, feed) {
         return;
       }
 
-      if (properties.isnc) {
+      if (getProperty("isnc")) {
         writeBlock(gAbsIncModal.format(90), gPlaneModal.format(18), gMotionModal.format(clockwise ? 2 : 3), xOutput.format(x), yOutput.format(y), zOutput.format(z), irOutput.format(cx - start.x, 0), krOutput.format(cz - start.z, 0), getFeed(feed));
       } else {
         // note: left hand coordinate system
@@ -2326,14 +2308,14 @@ function onCircular(clockwise, cx, cy, cz, x, y, z, feed) {
         return;
       }
 
-      if (properties.isnc) {
+      if (getProperty("isnc")) {
         writeBlock(gAbsIncModal.format(90), gPlaneModal.format(19), gMotionModal.format(clockwise ? 2 : 3), xOutput.format(x), yOutput.format(y), zOutput.format(z), jrOutput.format(cy - start.y, 0), krOutput.format(cz - start.z, 0), getFeed(feed));
       } else {
         writeBlock(gAbsIncModal.format(90), gPlaneModal.format(19), gMotionModal.format(clockwise ? 2 : 3), xOutput.format(x), yOutput.format(y), zOutput.format(z), jOutput.format(cy), kOutput.format(cz), getFeed(feed));
       }
       break;
     default:
-      if (properties.allow3DArcs) {
+      if (getProperty("allow3DArcs")) {
         // make sure maximumCircularSweep is well below 360deg
         // we could use G2.4 or G3.4 - direction is calculated
         var ip = getPositionU(0.5);
@@ -2554,7 +2536,7 @@ function onSectionEnd() {
 function writeRetract() {
   var words = []; // store all retracted axes in an array
   var retractAxes = new Array(false, false, false);
-  var method = properties.safePositionMethod;
+  var method = getProperty("safePositionMethod");
   if (method == "clearanceHeight") {
     if (!is3D()) {
       error(localize("Retract option 'Clearance Height' is not supported for multi-axis machining."));
