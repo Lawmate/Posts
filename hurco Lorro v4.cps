@@ -103,7 +103,7 @@ properties = {
     8. onSectionEnd():         edgeFeed.onSectionEnd();
 */
 
-var EDGE_FEED_VERSION = "0.2.0";
+var EDGE_FEED_VERSION = "0.2.1";
 
 var edgeFeedProperties = {
   edgeFeedEnable: {
@@ -518,7 +518,8 @@ var edgeFeed = {
       end      : {x:x, y:y, z:z},
       feed     : feed,
       turn     : turn,
-      radius   : getCircularRadius()
+      radius   : getCircularRadius(),
+      sweep    : getCircularSweep()
     };
     var b = edgeFeed.buffer;
     if (b && b.run) {
@@ -534,7 +535,9 @@ var edgeFeed = {
   /**
     Outputs a facet run: corner rolls and the lines between them. Each roll gets the wall radius of the circle
     through its own corner and its neighbouring corners, and each line the mean of the corners at its ends.
-    The first and last roll of a run have only one neighbour and are treated as real corners.
+    The first and last roll of a run have only one neighbour and keep the wall radius of the nearest fitted
+    roll, so the feed runs smoothly into and out of the curve. With only two rolls the radius is estimated from
+    the facets between them. A single roll between lines is a real corner and gets the max factor.
   */
   emitRun: function (run) {
     var s = edgeFeed.state;
@@ -555,6 +558,32 @@ var edgeFeed = {
         }
       }
     }
+    if (rolls.length > 1) { // a single roll between lines is a real corner; otherwise every roll is part of the curve
+      var fitted = [];
+      for (k = 0; k < rolls.length; ++k) {
+        if (run[rolls[k]].wallRadius !== undefined) {
+          fitted.push(k);
+        }
+      }
+      var estimate = (fitted.length == 0) ? edgeFeed.runRadius(run, rolls) : undefined;
+      for (k = 0; k < rolls.length; ++k) {
+        var roll = run[rolls[k]];
+        if (roll.wallRadius !== undefined) {
+          continue;
+        }
+        if (fitted.length == 0) {
+          roll.wallRadius = estimate; // too few rolls to fit a circle
+        } else { // the ends of the curve keep the radius of the nearest fitted roll, so the feed stays smooth
+          var best = fitted[0];
+          for (var f = 1; f < fitted.length; ++f) {
+            if (Math.abs(fitted[f] - k) < Math.abs(best - k)) {
+              best = fitted[f];
+            }
+          }
+          roll.wallRadius = run[rolls[best]].wallRadius;
+        }
+      }
+    }
     var previousRoll; // the last roll before the current item
     for (var j = 0; j < run.length; ++j) {
       var item = run[j];
@@ -568,7 +597,7 @@ var edgeFeed = {
         edgeFeed.host.writeArcXY(item.clockwise, item.cx, item.cy, item.end.x, item.end.y, item.end.z, feed, item.start);
         previousRoll = item;
       } else {
-        var nextRoll;
+        var nextRoll = undefined; // var is function-scoped: reset for every line
         for (var n = j + 1; n < run.length; ++n) {
           if (run[n].type == "roll") {
             nextRoll = run[n];
@@ -581,6 +610,29 @@ var edgeFeed = {
         edgeFeed.host.writeLinear(item.end.x, item.end.y, item.end.z, feed);
       }
     }
+  },
+
+  /**
+    Wall radius of a run too short to fit circles, from the facet lines between its first and last roll and the
+    mean roll sweep: a polygon with sides L turning by a at each corner lies on a circle R = L / (2 sin(a / 2)).
+    Returns 0 (a corner) when there is nothing to measure.
+  */
+  runRadius: function (run, rolls) {
+    var length = 0, facets = 0, sweep = 0;
+    for (var i = rolls[0] + 1; i < rolls[rolls.length - 1]; ++i) {
+      if (run[i].type == "line") {
+        var dx = run[i].end.x - run[i].start.x, dy = run[i].end.y - run[i].start.y;
+        length += Math.sqrt(dx * dx + dy * dy);
+        ++facets;
+      }
+    }
+    for (var k = 0; k < rolls.length; ++k) {
+      sweep += run[rolls[k]].sweep / rolls.length;
+    }
+    if ((facets == 0) || !(sweep > 1e-9)) {
+      return 0;
+    }
+    return (length / facets) / (2 * Math.sin(sweep / 2));
   },
 
   /** Outputs any buffered move. Call from every entry point that writes output. */
