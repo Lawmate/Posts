@@ -210,6 +210,10 @@ function writeComment(text) {
   writeln(formatComment(text));
 }
 
+// machine coordinate (G53) positions, shared between NC output and machine simulation
+var frontPosition = {x:300, y:405}; // 'front' manual NC pass-through
+var parkPosition = {x:300, y:400}; // end of program park
+
 //manually add gcode using manual nc pass through command
 function onPassThrough(text) {
   var commands = String(text).split(",");
@@ -218,7 +222,9 @@ function onPassThrough(text) {
       writeComment("Move to front");
       setCoolant(COOLANT_OFF);
       writeBlock(gFormat.format(53), gMotionModal.format(0), zOutput.format(0));
-      writeBlock(gFormat.format(53), gMotionModal.format(0), xOutput.format(300), yOutput.format(405));
+      machineSimulation({z:0, coordinates:MACHINE});
+      writeBlock(gFormat.format(53), gMotionModal.format(0), xOutput.format(frontPosition.x), yOutput.format(frontPosition.y));
+      machineSimulation({x:frontPosition.x, y:frontPosition.y, coordinates:MACHINE});
       writeBlock(mFormat.format(0));
       // writeBlock(yOutput.format(333));
     }else{
@@ -804,6 +810,12 @@ function onSection() {
     if (insertToolCall && !isFirstSection()) {
       if (properties.safeToolChangePositionX || properties.safeToolChangePositionY) {
         writeBlock(gFormat.format(53), conditional(properties.safeToolChangePositionX, "X" + xyzFormat.format(0)), conditional(properties.safeToolChangePositionY, "Y" + xyzFormat.format(0)));
+        machineSimulation({
+          x          : properties.safeToolChangePositionX ? 0 : undefined,
+          y          : properties.safeToolChangePositionY ? 0 : undefined,
+          coordinates: MACHINE,
+          feed       : false
+        });
       }
     }
   }
@@ -878,6 +890,7 @@ function onSection() {
     }
 
     writeBlock("T" + toolFormat.format(tool.number), mFormat.format(6));
+    machineSimulation({mode:TOOLCHANGE}); // perform tool change cycle in machine simulation
     writeln("DPRNT[LOG-HURCO VM10I-TOOL CHANGE-T" + toolFormat.format(tool.number) + "]");
 
     if (tool.comment) {
@@ -1049,6 +1062,7 @@ function onSection() {
     if (!retracted && !insertToolCall) {
       if (getCurrentPosition().z < initialPosition.z) {
         writeBlock(gMotionModal.format(0), zOutput.format(initialPosition.z));
+        machineSimulation({z:initialPosition.z});
       }
     }
   
@@ -1066,11 +1080,13 @@ function onSection() {
           gAbsIncModal.format(90),
           gMotionModal.format(0), xOutput.format(initialPosition.x), yOutput.format(initialPosition.y)
         );
+        machineSimulation({x:initialPosition.x, y:initialPosition.y});
         if (!useMultiAxisFeatures || currentSection.isZOriented()) {
           writeBlock(gMotionModal.format(0), gFormat.format(43), zOutput.format(initialPosition.z), hFormat.format(lengthOffset));
         } else {
           writeBlock(gMotionModal.format(0), zOutput.format(initialPosition.z));
         }
+        machineSimulation({z:initialPosition.z});
       } else {
         if (!useMultiAxisFeatures || currentSection.isZOriented()) {
           writeBlock(
@@ -1089,6 +1105,7 @@ function onSection() {
             zOutput.format(initialPosition.z)
           );
         }
+        machineSimulation({x:initialPosition.x, y:initialPosition.y, z:initialPosition.z});
       }
     } else {
       writeBlock(
@@ -1097,6 +1114,7 @@ function onSection() {
         xOutput.format(initialPosition.x),
         yOutput.format(initialPosition.y)
       );
+      machineSimulation({x:initialPosition.x, y:initialPosition.y});
     }
   }
 
@@ -2605,8 +2623,15 @@ function writeRetract() {
       gMotionModal.reset();
       if (retractAxes[2] && useMultiAxisFeatures) {
         writeBlock(gFormat.format(0), mFormat.format(140));
+        machineSimulation({mode:RETRACTTOOLAXIS}); // M140 retracts along the tool axis to the limit
       } else {
         writeBlock(gAbsIncModal.format(90), gFormat.format(53), gMotionModal.format(0), words);
+        machineSimulation({
+          x          : retractAxes[0] ? _xHome : undefined,
+          y          : retractAxes[1] ? _yHome : undefined,
+          z          : retractAxes[2] ? _zHome : undefined,
+          coordinates: MACHINE
+        });
       }
       break;
     default:
@@ -2615,6 +2640,84 @@ function writeRetract() {
     }
   }
 }
+
+// Start of machine simulation connection move support (adapted from the Autodesk HURCO post, rev 45867)
+var debugSimulation = false; // enable to output debug information for machine simulation calls in the NC program
+var TOOLCHANGE = "TOOL CHANGE";
+var RETRACTTOOLAXIS = "RETRACT TOOLAXIS";
+var WORK = "WORK CS";
+var MACHINE = "MACHINE CS";
+var MIN = "MIN";
+var MAX = "MAX";
+var WARNING_NON_RANGE = [100, 101, 102];
+
+/**
+ * Sends connection moves that are not part of the toolpath (retracts, tool changes, G53 moves) to machine simulation.
+ * This is a 3-axis machine, so TCP and tilted work planes are always off.
+ * @param {Object} parameters
+ *   x, y, z     : axis position, or MIN / MAX to move to the axis limit
+ *   feed        : feedrate, true to use the current feed, false for rapid (default from the active G0/G1 mode)
+ *   mode        : TOOLCHANGE | RETRACTTOOLAXIS
+ *   coordinates : WORK | MACHINE (default WORK)
+ */
+function machineSimulation(parameters) {
+  if (typeof revision != "number" || revision < 50198 || (getSimulationStreamPath() == "" && !debugSimulation)) {
+    return; // unsupported post kernel or not simulating
+  }
+  var getAxisLimit = function(axis, limit) {
+    var range = axis.getRange();
+    if (range.isNonRange()) {
+      var axisLetter = ["X", "Y", "Z"][axis.getCoordinate()];
+      warningOnce(subst(localize("Machine simulation tried to move the \"%1\" axis to its limit, but its range is unlimited in the machine definition."), axisLetter), WARNING_NON_RANGE[axis.getCoordinate()]);
+      return undefined;
+    }
+    return limit == MIN ? range.minimum : range.maximum;
+  };
+  var x = (isNaN(parameters.x) && parameters.x) ? getAxisLimit(machineConfiguration.getAxisX(), parameters.x) : parameters.x;
+  var y = (isNaN(parameters.y) && parameters.y) ? getAxisLimit(machineConfiguration.getAxisY(), parameters.y) : parameters.y;
+  var z = (isNaN(parameters.z) && parameters.z) ? getAxisLimit(machineConfiguration.getAxisZ(), parameters.z) : parameters.z;
+  var mode = parameters.mode;
+  if (mode !== undefined && mode != TOOLCHANGE && mode != RETRACTTOOLAXIS) {
+    error(subst("Mode '%1' is not supported.", mode));
+  }
+  var feed = parameters.feed;
+  if (feed === undefined) {
+    feed = gMotionModal.getCurrent() != 0;
+  }
+
+  simulation.setTWPModeOff();
+  simulation.setTCPModeOff();
+
+  if (mode == RETRACTTOOLAXIS) {
+    simulation.retractAlongToolAxisToLimit();
+  }
+
+  if (debugSimulation) {
+    writeln("  DEBUG" + JSON.stringify(parameters));
+  }
+
+  if (x !== undefined || y !== undefined || z !== undefined) {
+    if (x !== undefined) {simulation.setTargetX(x);}
+    if (y !== undefined) {simulation.setTargetY(y);}
+    if (z !== undefined) {simulation.setTargetZ(z);}
+    if (feed) {
+      simulation.setMotionToLinear();
+      simulation.setFeedrate(typeof feed == "number" ? feed : (feedOutput.getCurrent() ? feedOutput.getCurrent() : highFeedrate));
+    } else {
+      simulation.setMotionToRapid();
+    }
+    if (parameters.coordinates == MACHINE) {
+      simulation.moveToTargetInMachineCoords();
+    } else {
+      simulation.moveToTargetInWorkCoords();
+    }
+  }
+  if (mode == TOOLCHANGE) {
+    simulation.performToolChangeCycle();
+    simulation.moveToTargetInMachineCoords();
+  }
+}
+// End of machine simulation connection move support
 
 function onClose() {
   nullProbeAngle(false);
@@ -2645,7 +2748,8 @@ function onClose() {
   zOutput.reset();
 
 //   writeRetract(X, Y);
-  writeBlock(gAbsIncModal.format(90), gFormat.format(53), gMotionModal.format(0), "X" + xyzFormat.format(300), "Y" + xyzFormat.format(400));  
+  writeBlock(gAbsIncModal.format(90), gFormat.format(53), gMotionModal.format(0), "X" + xyzFormat.format(parkPosition.x), "Y" + xyzFormat.format(parkPosition.y));
+  machineSimulation({x:parkPosition.x, y:parkPosition.y, coordinates:MACHINE});
   
   onCommand(COMMAND_UNLOCK_MULTI_AXIS);
   writeBlock(gFormat.format(69)); // cancel frame
